@@ -31,12 +31,30 @@ async def post_init(application: Application):
     logger.info("Database initialized")
     
     if os.environ.get("CLEAR_CATALOG_ON_START") == "1":
-        logger.info("Running catalog cleanup as requested by CLEAR_CATALOG_ON_START=1...")
         from src.config import DB_PATH
+        abs_db_path = os.path.abspath(DB_PATH)
+        logger.info(f"--- CATALOG CLEANUP TRIGGERED ---")
+        logger.info(f"Env CLEAR_CATALOG_ON_START = 1")
+        logger.info(f"DB_PATH resolved to: {abs_db_path}")
+        
         async with aiosqlite.connect(DB_PATH) as db:
-            await db.execute('PRAGMA foreign_keys = OFF;')
-            await db.execute('BEGIN IMMEDIATE')
+            # Check existing tables
+            async with db.execute("SELECT name FROM sqlite_master WHERE type='table';") as cursor:
+                tables = await cursor.fetchall()
+                table_names = [t[0] for t in tables]
+                logger.info(f"Existing tables in DB: {table_names}")
+
+            # Backup check if required tables exist
+            if 'categories' not in table_names:
+                logger.warning("Tables like 'categories' not found, maybe using the wrong database file!")
+
+            logger.info("Starting safe deletion process...")
+            
             try:
+                # Disable FKs for the duration of the connection's transaction logic
+                await db.execute('PRAGMA foreign_keys = OFF;')
+                await db.execute('BEGIN IMMEDIATE;')
+                
                 # Count
                 async with db.execute('SELECT COUNT(*) FROM favorites') as cursor: favs_count = (await cursor.fetchone())[0]
                 async with db.execute('SELECT COUNT(*) FROM stock_items') as cursor: stock_count = (await cursor.fetchone())[0]
@@ -54,12 +72,38 @@ async def post_init(application: Application):
                 await db.execute("DELETE FROM sqlite_sequence WHERE name IN ('categories', 'products', 'stock_items')")
                 
                 await db.commit()
-                logger.info("✅ Database catalog cleared successfully!")
-                logger.info(f"📊 Deleted: {cat_count} categories, {prod_count} products, {stock_count} stock items, {favs_count} favorites.")
+                # Re-enable FKs after successful commit
+                await db.execute('PRAGMA foreign_keys = ON;')
+                
+                # Vacuum outside of transaction
+                await db.execute('VACUUM;')
+                
+                logger.info("✅ Catalog cleared successfully!")
+                logger.info(f"📊 Deleted records report:")
+                logger.info(f" - categories deleted: {cat_count}")
+                logger.info(f" - products deleted: {prod_count}")
+                logger.info(f" - stock_items deleted: {stock_count}")
+                logger.info(f" - favorites deleted: {favs_count}")
+                
+                # Verification
+                async with db.execute('SELECT COUNT(*) FROM favorites') as cursor: v_favs = (await cursor.fetchone())[0]
+                async with db.execute('SELECT COUNT(*) FROM stock_items') as cursor: v_stock = (await cursor.fetchone())[0]
+                async with db.execute('SELECT COUNT(*) FROM products') as cursor: v_prod = (await cursor.fetchone())[0]
+                async with db.execute('SELECT COUNT(*) FROM categories') as cursor: v_cat = (await cursor.fetchone())[0]
+                
+                logger.info("📊 Verification counts (should be all 0):")
+                logger.info(f"categories = {v_cat}, products = {v_prod}, stock_items = {v_stock}, favorites = {v_favs}")
+                
+                if sum([v_cat, v_prod, v_stock, v_favs]) == 0:
+                    logger.info("✅ Verification MATCH: All catalog items removed.")
+                else:
+                    logger.error("❌ Verification FAILED: Some items remained in DB.")
+                    
                 logger.warning("⚠️ PLEASE REMOVE 'CLEAR_CATALOG_ON_START' FROM ENVIRONMENT VARIABLES TO PREVENT WIPING ON NEXT RESTART.")
             except Exception as e:
                 await db.execute('ROLLBACK')
-                logger.error(f"❌ Error during catalog cleanup: {e}")
+                logger.error(f"❌ Error during catalog cleanup:")
+                logger.error(traceback.format_exc())
 
 async def post_stop(application: Application):
     await close_payment_session()

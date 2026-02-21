@@ -55,7 +55,8 @@ async def admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton(get_text(lang, 'admin_ban_user'), callback_data="adm_ban"),
          InlineKeyboardButton(get_text(lang, 'admin_unban_user'), callback_data="adm_unban")],
         [InlineKeyboardButton("🇷🇺 👥 Пользователи" if lang == 'ru' else "🇬🇧 👥 Users", callback_data="adm_users")],
-        [InlineKeyboardButton(get_text(lang, 'btn_purchase_history'), callback_data="adm_history:page:0")]
+        [InlineKeyboardButton(get_text(lang, 'btn_purchase_history'), callback_data="adm_history:page:0")],
+        [InlineKeyboardButton("🇷🇺 🧹 Очистить каталог (Опасно)" if lang == 'ru' else "🇬🇧 🧹 Clear Catalog (Danger)", callback_data="adm_clear_cat_warn")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -438,6 +439,85 @@ async def adm_hide_stock(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text("✅ Announcement hidden.")
 
 
+# --- Clear Catalog Flow ---
+async def adm_clear_cat_warn(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    db_user = await get_user(update.effective_user.id)
+    lang = db_user['language'] if db_user else 'en'
+    
+    text = "Are you sure you want to permanently delete all categories, products, stock items, and favorites? This cannot be undone." if lang == 'en' \
+           else "Вы уверены, что хотите навсегда удалить все категории, товары, запасы и избранное? Это действие нельзя отменить."
+    
+    btn_yes = "Yes, delete everything" if lang == 'en' else "Да, удалить всё"
+    btn_no = "Cancel" if lang == 'en' else "Отмена"
+    
+    keyboard = [
+        [InlineKeyboardButton(f"⚠️ {btn_yes}", callback_data="adm_clear_cat_confirm")],
+        [InlineKeyboardButton(btn_no, callback_data="admin_home")]
+    ]
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def admin_home(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    class DummyMessage:
+        async def reply_text(self, *args, **kwargs):
+            await query.edit_message_text(*args, **kwargs)
+    
+    update.message = DummyMessage()
+    await admin_cmd(update, context)
+
+async def adm_clear_cat_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    from src.config import DB_PATH
+    import aiosqlite
+    import traceback
+    
+    try:
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute('PRAGMA foreign_keys = OFF;')
+            await db.execute('BEGIN IMMEDIATE;')
+            
+            # Count
+            async with db.execute('SELECT COUNT(*) FROM favorites') as cursor: favs_count = (await cursor.fetchone())[0]
+            async with db.execute('SELECT COUNT(*) FROM stock_items') as cursor: stock_count = (await cursor.fetchone())[0]
+            async with db.execute('SELECT COUNT(*) FROM products') as cursor: prod_count = (await cursor.fetchone())[0]
+            async with db.execute('SELECT COUNT(*) FROM categories') as cursor: cat_count = (await cursor.fetchone())[0]
+            
+            # Delete
+            await db.execute('DELETE FROM favorites')
+            await db.execute('DELETE FROM stock_items')
+            await db.execute('DELETE FROM products')
+            await db.execute('DELETE FROM categories')
+            await db.execute("DELETE FROM settings WHERE key = 'stock_update_msg'")
+            
+            # Reset sequences
+            await db.execute("DELETE FROM sqlite_sequence WHERE name IN ('categories', 'products', 'stock_items')")
+            
+            await db.commit()
+            await db.execute('PRAGMA foreign_keys = ON;')
+            await db.execute('VACUUM;')
+            
+            report = (f"✅ Catalog cleared successfully!\n\n"
+                      f"📊 Deleted records report:\n"
+                      f" - categories deleted: {cat_count}\n"
+                      f" - products deleted: {prod_count}\n"
+                      f" - stock_items deleted: {stock_count}\n"
+                      f" - favorites deleted: {favs_count}")
+            logger.info("Admin manually cleared the catalog:")
+            logger.info(report)
+            
+            await query.edit_message_text(report)
+            
+    except Exception as e:
+        logger.error(f"Error manually clearing catalog: {e}\n{traceback.format_exc()}")
+        await query.edit_message_text(f"❌ Error clearing catalog. Check logs.")
+
+
 # --- Purchase History Flow ---
 async def adm_history_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -677,11 +757,16 @@ def register_handlers(application: Application):
         fallbacks=[CommandHandler('cancel', cancel_admin)]
     )
     application.add_handler(hist_search_order_conv)
+    application.add_handler(CallbackQueryHandler(adm_hide_stock, pattern='^adm_hide_stock$'))
+    
+    application.add_handler(CallbackQueryHandler(adm_clear_cat_warn, pattern='^adm_clear_cat_warn$'))
+    application.add_handler(CallbackQueryHandler(adm_clear_cat_confirm, pattern='^adm_clear_cat_confirm$'))
+    application.add_handler(CallbackQueryHandler(admin_home, pattern='^admin_home$'))
     
     application.add_handler(CallbackQueryHandler(adm_history_page, pattern='^adm_history:page:'))
+    application.add_handler(CallbackQueryHandler(adm_history_user_page, pattern='^adm_history_u:page:'))
     application.add_handler(CallbackQueryHandler(history_back, pattern='^adm_history:back$'))
 
     # Single callback handlers
     application.add_handler(CallbackQueryHandler(adm_pub_stock, pattern='^adm_pub_stock$'))
     application.add_handler(CallbackQueryHandler(adm_hide_stock, pattern='^adm_hide_stock$'))
-
