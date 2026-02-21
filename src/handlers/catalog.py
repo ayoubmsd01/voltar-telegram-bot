@@ -16,31 +16,23 @@ from src.config import DB_PATH
 from src.db import dict_factory
 logger = logging.getLogger(__name__)
 
-async def stock_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    db_user = await get_user(user_id)
-    lang = db_user['language'] if db_user else 'en'
-    bot_username = context.bot.username
-
-    # Fetch announcement message if any
-    announcement = await get_setting('stock_update_msg')
-
-    # Build the stock message
+async def build_stock_messages(lang: str, bot_username: str, announcement: str = None) -> list:
     categories = await get_categories()
     if not categories:
-        await update.message.reply_text(get_text(lang, 'stock_empty'))
-        return
+        return []
 
     all_products = await get_all_products()
     has_stock = any(p['stock_count'] > 0 for p in all_products)
     if not has_stock:
-        await update.message.reply_text(get_text(lang, 'stock_empty'))
-        return
+        return []
 
     messages = []
-    current_msg = f"<b>{get_text(lang, 'stock_header')}</b>\n\n"
+    
+    header = f"<b>{get_text(lang, 'stock_header')}</b>\n\n"
     if announcement:
-        current_msg = announcement + "\n\n" + current_msg
+        current_msg = announcement + "\n\n" + header
+    else:
+        current_msg = header
 
     for cat in categories:
         cat_products = [p for p in all_products if p['category_id'] == cat['id'] and p['stock_count'] > 0]
@@ -64,6 +56,21 @@ async def stock_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if current_msg:
         messages.append(current_msg)
+
+    return messages
+
+async def stock_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    db_user = await get_user(user_id)
+    lang = db_user['language'] if db_user else 'en'
+    bot_username = context.bot.username
+
+    announcement = await get_setting('stock_update_msg')
+    messages = await build_stock_messages(lang, bot_username, announcement)
+    
+    if not messages:
+        await update.message.reply_text(get_text(lang, 'stock_empty'))
+        return
 
     for msg in messages:
         await update.message.reply_text(msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)

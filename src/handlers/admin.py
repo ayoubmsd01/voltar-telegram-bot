@@ -13,6 +13,7 @@ from src.db import (
 )
 from src.locales import get_text
 from telegram.error import Forbidden
+from src.handlers.catalog import build_stock_messages
 import re
 
 logger = logging.getLogger(__name__)
@@ -365,9 +366,22 @@ async def adm_pub_stock(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await query.edit_message_text(f"⏳ Broadcasting..." if admin_lang == 'en' else "⏳ Рассылка...")
     
-    msg_en = "📣 <b>Stock Update!</b> Fresh items are now available!\nBuy: /start"
-    msg_ru = "📣 <b>Обновление ассортимента!</b> Доступны новые товары!\nКупить: /start"
+    bot_username = context.bot.username
     
+    # Pre-build messages for both languages
+    announcement_ru = "📣 <b>Обновление склада!</b>"
+    announcement_en = "📣 <b>Stock Update!</b>"
+    
+    messages_ru = await build_stock_messages('ru', bot_username, announcement=announcement_ru)
+    messages_en = await build_stock_messages('en', bot_username, announcement=announcement_en)
+    
+    # If no stock messages were generated, we might want to still send something or just skip (the user asked "لا ترسل إشعار" or send "📦 No products available yet.")
+    # Assuming we will send "No products" if messages is empty:
+    if not messages_ru:
+        messages_ru = [f"{announcement_ru}\n\n📦 В наличии пока нет товаров."]
+    if not messages_en:
+        messages_en = [f"{announcement_en}\n\n📦 No products available yet."]
+        
     active_users = await get_active_users()
     success_count = 0
     blocked_count = 0
@@ -380,9 +394,11 @@ async def adm_pub_stock(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for u in active_users:
         uid = u['id']
         ulang = u.get('language', 'en')
-        text = msg_ru if ulang == 'ru' else msg_en
+        msgs = messages_ru if ulang == 'ru' else messages_en
+        
         try:
-            await context.bot.send_message(chat_id=uid, text=text, parse_mode=ParseMode.HTML)
+            for text in msgs:
+                await context.bot.send_message(chat_id=uid, text=text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
             success_count += 1
         except Forbidden:
             logger.info(f"User {uid} blocked the bot (Forbidden).")
