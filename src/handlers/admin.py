@@ -764,7 +764,6 @@ def register_handlers(application: Application):
     application.add_handler(CallbackQueryHandler(admin_home, pattern='^admin_home$'))
     
     application.add_handler(CallbackQueryHandler(adm_history_page, pattern='^adm_history:page:'))
-    application.add_handler(CallbackQueryHandler(adm_history_user_page, pattern='^adm_history_u:page:'))
     application.add_handler(CallbackQueryHandler(history_back, pattern='^adm_history:back$'))
 
     # Single callback handlers
