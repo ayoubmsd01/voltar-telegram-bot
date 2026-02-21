@@ -65,6 +65,9 @@ LOCALES = {
         'admin_balance_enter_id': "Введите ID пользователя:",
         'admin_balance_enter_amount': "Введите сумму (может быть отрицательной для снятия):",
         'admin_balance_success': "✅ Баланс изменен.",
+        'btn_purchase_history': "🧾 История покупок",
+        'admin_search_user': "Введите ID пользователя для поиска:",
+        'admin_search_order': "Введите ID заказа для поиска:",
     },
     'en': {
         'select_lang': "Select language:",
@@ -132,6 +135,9 @@ LOCALES = {
         'admin_balance_enter_id': "Enter User ID:",
         'admin_balance_enter_amount': "Enter amount (can be negative to deduct):",
         'admin_balance_success': "✅ Balance updated.",
+        'btn_purchase_history': "🧾 Purchase History",
+        'admin_search_user': "Enter User ID to search:",
+        'admin_search_order': "Enter Order ID to search:",
     }
 }
 

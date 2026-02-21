@@ -9,7 +9,7 @@ from src.config import ADMIN_IDS
 from src.db import (
     get_user, get_categories, add_category, add_product,
     get_products_by_category, add_stock_item, get_all_products,
-    update_user_balance, set_setting, delete_setting, set_user_ban, get_favorites, get_all_users
+    update_user_balance, set_setting, delete_setting, set_user_ban, get_favorites, get_all_users, get_purchases_page
 )
 from src.locales import get_text
 import re
@@ -23,6 +23,8 @@ ADD_PROD_CAT, ADD_PROD_TITLE_RU, ADD_PROD_TITLE_EN, ADD_PROD_DESC_RU, ADD_PROD_D
 ADD_STOCK_CAT, ADD_STOCK_PROD, ADD_STOCK_TYPE, ADD_STOCK_CONTENT = range(10, 14)
 # Balances
 BAL_USER_ID, BAL_AMOUNT = range(20, 22)
+# History Search
+SEARCH_HISTORY_USER, SEARCH_HISTORY_ORDER = range(60, 62)
 # Ban
 BAN_USER_ID = 40
 UNBAN_USER_ID = 41
@@ -50,7 +52,8 @@ async def admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
          InlineKeyboardButton(get_text(lang, 'admin_hide_stock'), callback_data="adm_hide_stock")],
         [InlineKeyboardButton(get_text(lang, 'admin_ban_user'), callback_data="adm_ban"),
          InlineKeyboardButton(get_text(lang, 'admin_unban_user'), callback_data="adm_unban")],
-        [InlineKeyboardButton("🇷🇺 👥 Пользователи" if lang == 'ru' else "🇬🇧 👥 Users", callback_data="adm_users")]
+        [InlineKeyboardButton("🇷🇺 👥 Пользователи" if lang == 'ru' else "🇬🇧 👥 Users", callback_data="adm_users")],
+        [InlineKeyboardButton(get_text(lang, 'btn_purchase_history'), callback_data="adm_history:page:0")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -196,7 +199,9 @@ async def adm_add_stock_content(update: Update, context: ContextTypes.DEFAULT_TY
             await update.message.reply_text("Please send a document file.")
             return ADD_STOCK_CONTENT
         file_id = update.message.document.file_id
-        await add_stock_item(prod_id, 'file', file_id)
+        file_name = getattr(update.message.document, "file_name", "UnknownFileName") or "UnknownFileName"
+        content = f"{file_id}|{file_name}"
+        await add_stock_item(prod_id, 'file', content)
         count = 1
     else:
         if not update.message.text:
@@ -358,6 +363,157 @@ async def adm_hide_stock(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text("✅ Announcement hidden.")
 
 
+# --- Purchase History Flow ---
+async def adm_history_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data.split(':')
+    page = int(data[2]) if len(data) > 2 else 0
+    await _show_history(update, context, page)
+    return ConversationHandler.END
+
+async def _show_history(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int, search_user_id=None, search_order_id=None):
+    admin_id = update.effective_user.id
+    db_user = await get_user(admin_id)
+    lang = db_user['language'] if db_user else 'en'
+    
+    limit = 10
+    offset = page * limit
+    
+    result = await get_purchases_page(offset, limit, search_user_id, search_order_id)
+    total = result['total']
+    records = result['data']
+    
+    from math import ceil
+    total_pages = ceil(total / limit) if total > 0 else 1
+    
+    kb = []
+    
+    if total == 0:
+        kb.append([InlineKeyboardButton("⬅ Back", callback_data="adm_history:back")])
+        text = "No purchases found."
+        if update.callback_query:
+            await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
+        else:
+            await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb))
+        return
+        
+    title = "🧾 Purchase History" if lang == 'en' else "🧾 История покупок"
+    page_text = f"Page {page+1}/{total_pages}" if lang == 'en' else f"Стр. {page+1}/{total_pages}"
+    
+    lines = [f"<b>{title} ({page_text})</b>\n"]
+    for idx, r in enumerate(records):
+        d_raw = r['purchased_at']
+        d_fmt = d_raw[:16] if d_raw else "N/A"
+        
+        ord_id = r['order_id']
+        inv_id = r['invoice_id']
+        inv_str = f" | Invoice: {inv_id}" if inv_id else ""
+        
+        username = f"@{r['username']}" if r['username'] else "NoUsername"
+        uid = r['user_id']
+        
+        prod_name = r['title_en'] if lang == 'en' else r['title_ru']
+        price = r['price_paid']
+        
+        used_bal = r['used_balance']
+        paid_crypto = r['paid_crypto']
+        
+        if paid_crypto and used_bal:
+            pay_str = f"PARTIAL (Balance ${used_bal:.2f} + Crypto ${paid_crypto:.2f})"
+        elif paid_crypto:
+            pay_str = f"CRYPTO (${paid_crypto:.2f})"
+        else:
+            pay_str = f"BALANCE (${price:.2f})"
+            
+        deltype = r['deliver_type']
+        if deltype == 'file':
+            del_str = "FILE"
+        else:
+            deltype_upper = deltype.upper() if deltype else "UNKNOWN"
+            del_str = f"{deltype_upper}"
+        
+        real_idx = offset + idx + 1
+        
+        item_block = (
+            f"<b>{real_idx})</b> {d_fmt} | Order #{ord_id}{inv_str}\n"
+            f"   User: {username} | ID: <code>{uid}</code>\n"
+            f"   Product: {prod_name}\n"
+            f"   Price: ${price:.2f} | Pay: {pay_str}\n"
+            f"   Delivered: {del_str}\n"
+        )
+        lines.append(item_block)
+        
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("⬅ Prev", callback_data=f"adm_history:page:{page-1}"))
+    if page < total_pages - 1:
+        nav.append(InlineKeyboardButton("Next ➡", callback_data=f"adm_history:page:{page+1}"))
+        
+    if nav:
+        kb.append(nav)
+    
+    btn_search_user = "🔎 Search by User ID" if lang == 'en' else "🔎 Поиск по ID юзера"
+    btn_search_order = "🔎 Search by Order ID" if lang == 'en' else "🔎 Поиск по номеру заказа"
+    
+    kb.append([InlineKeyboardButton(btn_search_user, callback_data="adm_history:search_user")])
+    kb.append([InlineKeyboardButton(btn_search_order, callback_data="adm_history:search_order")])
+    kb.append([InlineKeyboardButton("⬅ Back to Admin" if lang == 'en' else "⬅ В меню", callback_data="adm_history:back")])
+    
+    text = "\n".join(lines)
+    if update.callback_query:
+        await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.HTML)
+    else:
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.HTML)
+
+async def history_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    update.message = query.message
+    await admin_cmd(update, context)
+    return ConversationHandler.END
+
+async def adm_search_user_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    admin_id = update.effective_user.id
+    db_user = await get_user(admin_id)
+    lang = db_user['language'] if db_user else 'en'
+    
+    await query.edit_message_text(get_text(lang, 'admin_search_user'))
+    return SEARCH_HISTORY_USER
+
+async def adm_search_user_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    if not text.isdigit():
+        await update.message.reply_text("Invalid ID. Action cancelled.")
+        return ConversationHandler.END
+        
+    uid = int(text)
+    await _show_history(update, context, page=0, search_user_id=uid)
+    return ConversationHandler.END
+
+async def adm_search_order_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    admin_id = update.effective_user.id
+    db_user = await get_user(admin_id)
+    lang = db_user['language'] if db_user else 'en'
+    
+    await query.edit_message_text(get_text(lang, 'admin_search_order'))
+    return SEARCH_HISTORY_ORDER
+
+async def adm_search_order_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    if not text.isdigit():
+        await update.message.reply_text("Invalid ID. Action cancelled.")
+        return ConversationHandler.END
+        
+    oid = int(text)
+    await _show_history(update, context, page=0, search_order_id=oid)
+    return ConversationHandler.END
+
+
 def cancel_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     update.message.reply_text("Admin action cancelled.")
     return ConversationHandler.END
@@ -431,6 +587,24 @@ def register_handlers(application: Application):
     application.add_handler(unban_conv)
 
     application.add_handler(CallbackQueryHandler(adm_users, pattern='^adm_users$'))
+
+    # History Search Conversations
+    hist_search_user_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(adm_search_user_start, pattern='^adm_history:search_user$')],
+        states={SEARCH_HISTORY_USER: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_search_user_process)]},
+        fallbacks=[CommandHandler('cancel', cancel_admin)]
+    )
+    application.add_handler(hist_search_user_conv)
+    
+    hist_search_order_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(adm_search_order_start, pattern='^adm_history:search_order$')],
+        states={SEARCH_HISTORY_ORDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_search_order_process)]},
+        fallbacks=[CommandHandler('cancel', cancel_admin)]
+    )
+    application.add_handler(hist_search_order_conv)
+    
+    application.add_handler(CallbackQueryHandler(adm_history_page, pattern='^adm_history:page:'))
+    application.add_handler(CallbackQueryHandler(history_back, pattern='^adm_history:back$'))
 
     # Single callback handlers
     application.add_handler(CallbackQueryHandler(adm_pub_stock, pattern='^adm_pub_stock$'))

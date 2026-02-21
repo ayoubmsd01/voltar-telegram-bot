@@ -68,12 +68,22 @@ async def init_db():
                 product_id INTEGER,
                 stock_item_id INTEGER,
                 price_paid REAL,
+                used_balance REAL DEFAULT 0,
+                paid_crypto REAL DEFAULT 0,
+                invoice_id TEXT,
                 purchased_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(user_id) REFERENCES users(id),
                 FOREIGN KEY(product_id) REFERENCES products(id),
                 FOREIGN KEY(stock_item_id) REFERENCES stock_items(id)
             )
         ''')
+        
+        try:
+            await db.execute('ALTER TABLE purchases ADD COLUMN used_balance REAL DEFAULT 0')
+            await db.execute('ALTER TABLE purchases ADD COLUMN paid_crypto REAL DEFAULT 0')
+            await db.execute('ALTER TABLE purchases ADD COLUMN invoice_id TEXT')
+        except Exception:
+            pass
 
         await db.execute('''
             CREATE TABLE IF NOT EXISTS favorites (
@@ -349,3 +359,36 @@ async def get_all_users() -> List[Dict]:
         db.row_factory = dict_factory
         async with db.execute('SELECT * FROM users ORDER BY registered_at ASC') as cursor:
             return await cursor.fetchall()
+async def get_purchases_page(offset: int = 0, limit: int = 10, user_id=None, order_id=None) -> Dict:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = dict_factory
+        
+        where_clause = ""
+        params = []
+        if user_id:
+            where_clause = "WHERE pu.user_id = ?"
+            params.append(user_id)
+        elif order_id:
+            where_clause = "WHERE pu.id = ?"
+            params.append(order_id)
+            
+        count_query = f"SELECT COUNT(*) as c FROM purchases pu {where_clause}"
+        async with db.execute(count_query, params) as cursor:
+            count = (await cursor.fetchone())['c']
+            
+        params.extend([limit, offset])
+        query = f"""
+            SELECT pu.id as order_id, pu.user_id, pu.price_paid, pu.used_balance, pu.paid_crypto, pu.invoice_id, pu.purchased_at,
+                   u.username, pr.title_en, pr.title_ru, si.type as deliver_type, si.content as deliver_content
+            FROM purchases pu
+            LEFT JOIN users u ON pu.user_id = u.id
+            LEFT JOIN products pr ON pu.product_id = pr.id
+            LEFT JOIN stock_items si ON pu.stock_item_id = si.id
+            {where_clause}
+            ORDER BY pu.purchased_at DESC
+            LIMIT ? OFFSET ?
+        """
+        async with db.execute(query, params) as cursor:
+            data = await cursor.fetchall()
+            
+        return {'total': count, 'data': data}

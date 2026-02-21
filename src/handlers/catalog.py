@@ -291,7 +291,7 @@ async def prod_buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.info("Scenario A: Full Balance")
                 await db.execute("UPDATE stock_items SET status = 'sold' WHERE id = ?", (stock_id,))
                 await db.execute("UPDATE users SET balance = balance - ?, total_spent = total_spent + ? WHERE id = ?", (price, price, user_id))
-                await db.execute("INSERT INTO purchases (user_id, product_id, stock_item_id, price_paid) VALUES (?, ?, ?, ?)", (user_id, prod_id, stock_id, price))
+                await db.execute("INSERT INTO purchases (user_id, product_id, stock_item_id, price_paid, used_balance, paid_crypto, invoice_id) VALUES (?, ?, ?, ?, ?, ?, ?)", (user_id, prod_id, stock_id, price, price, 0, None))
                 await db.commit()
                 
                 if stock_type in ('code', 'link', 'text'):
@@ -299,7 +299,8 @@ async def prod_buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await context.bot.send_message(chat_id=user_id, text=text_msg)
                 elif stock_type == 'file':
                     text_msg = get_text(lang, 'purchase_success', content="[FILE]")
-                    await context.bot.send_document(chat_id=user_id, document=stock_content, caption=text_msg)
+                    actual_file_id = stock_content.split('|')[0] if '|' in stock_content else stock_content
+                    await context.bot.send_document(chat_id=user_id, document=actual_file_id, caption=text_msg)
                     
                 await query.edit_message_text(get_text(lang, 'purchase_success', content="Delivery complete!"))
                 return
@@ -435,7 +436,7 @@ async def check_order_payment(update: Update, context: ContextTypes.DEFAULT_TYPE
                 await db.execute("UPDATE invoices SET status = 'paid' WHERE invoice_id = ?", (invoice_id,))
                 await db.execute("UPDATE stock_items SET status = 'sold' WHERE id = ?", (item_id,))
                 await db.execute("UPDATE users SET total_spent = total_spent + ? WHERE id = ?", (price, user_id))
-                await db.execute("INSERT INTO purchases (user_id, product_id, stock_item_id, price_paid) VALUES (?, ?, ?, ?)", (user_id, prod_id, item_id, price))
+                await db.execute("INSERT INTO purchases (user_id, product_id, stock_item_id, price_paid, used_balance, paid_crypto, invoice_id) VALUES (?, ?, ?, ?, ?, ?, ?)", (user_id, prod_id, item_id, price, paid_from_balance, price - paid_from_balance, invoice_id))
                 
                 async with db.execute("SELECT content, type FROM stock_items WHERE id = ?", (item_id,)) as cursor:
                     stock = await cursor.fetchone()
@@ -451,7 +452,8 @@ async def check_order_payment(update: Update, context: ContextTypes.DEFAULT_TYPE
                     await context.bot.send_message(chat_id=user_id, text=text)
                 elif stock_type == 'file':
                     text = get_text(lang, 'purchase_success', content="[FILE]")
-                    await context.bot.send_document(chat_id=user_id, document=stock_content, caption=text)
+                    actual_file_id = stock_content.split('|')[0] if '|' in stock_content else stock_content
+                    await context.bot.send_document(chat_id=user_id, document=actual_file_id, caption=text)
                     
                 await query.edit_message_text(get_text(lang, 'purchase_success', content="Delivery complete!"))
             else:
