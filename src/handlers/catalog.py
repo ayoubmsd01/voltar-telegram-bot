@@ -96,14 +96,15 @@ async def products_base(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_deep_link(update: Update, context: ContextTypes.DEFAULT_TYPE, arg: str, lang: str):
     if arg.startswith('cat_'):
         cat_id = int(arg.split('_')[1])
-        # emulate cat select
         class DummyQuery:
             data = f"prod_cat:{cat_id}"
             async def answer(self): pass
             async def edit_message_text(self, *args, **kwargs):
                 await update.message.reply_text(*args, **kwargs)
-        update.callback_query = DummyQuery()
-        await prod_cat_callback(update, context)
+        class MockUpdate:
+            effective_user = update.effective_user
+            callback_query = DummyQuery()
+        await prod_cat_callback(MockUpdate(), context)
     elif arg.startswith('prod_'):
         prod_id = int(arg.split('_')[1])
         class DummyQuery:
@@ -111,8 +112,10 @@ async def handle_deep_link(update: Update, context: ContextTypes.DEFAULT_TYPE, a
             async def answer(self, *args, **kwargs): pass
             async def edit_message_text(self, *args, **kwargs):
                 await update.message.reply_text(*args, **kwargs)
-        update.callback_query = DummyQuery()
-        await prod_buy_callback(update, context)
+        class MockUpdate:
+            effective_user = update.effective_user
+            callback_query = DummyQuery()
+        await prod_buy_callback(MockUpdate(), context)
 
 async def prod_cat_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query

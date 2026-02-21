@@ -69,6 +69,9 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # User not in DB
         username = update.effective_user.username
         await create_user(user_id, 'en', username)
+        if args:
+            context.user_data['pending_dl'] = args[0]
+            
         # Prompt select language
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("🇷🇺 Русский", callback_data="lang_ru"), InlineKeyboardButton("🇬🇧 English", callback_data="lang_en")]
@@ -102,6 +105,17 @@ async def lang_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text=get_text(lang, 'main_menu'),
         reply_markup=get_main_keyboard(lang)
     )
+
+    pending_dl = context.user_data.pop('pending_dl', None)
+    if pending_dl:
+        from .catalog import handle_deep_link
+        
+        # Build a pseudo-update to pass down so `update.message.reply_text` inside deep link handler works.
+        class MockUpdateDL:
+            effective_user = update.effective_user
+            message = update.callback_query.message
+            
+        await handle_deep_link(MockUpdateDL(), context, pending_dl, lang)
 
 async def rules_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
