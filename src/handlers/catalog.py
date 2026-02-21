@@ -107,12 +107,12 @@ async def handle_deep_link(update: Update, context: ContextTypes.DEFAULT_TYPE, a
     elif arg.startswith('prod_'):
         prod_id = int(arg.split('_')[1])
         class DummyQuery:
-            data = f"prod_item:{prod_id}"
-            async def answer(self): pass
+            data = f"prod_buy:{prod_id}"
+            async def answer(self, *args, **kwargs): pass
             async def edit_message_text(self, *args, **kwargs):
                 await update.message.reply_text(*args, **kwargs)
         update.callback_query = DummyQuery()
-        await prod_item_callback(update, context)
+        await prod_buy_callback(update, context)
 
 async def prod_cat_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query

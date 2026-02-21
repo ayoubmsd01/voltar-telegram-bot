@@ -224,12 +224,13 @@ async def adm_add_stock_content(update: Update, context: ContextTypes.DEFAULT_TY
         from src.db import get_product
         prod = await get_product(prod_id)
         
+        bot_username = context.bot.username
         for user_id in favs:
             try:
                 # We should get user lang, but we'll default to EN here as fetching each user lang inside loop is slightly slower
                 db_user = await get_user(user_id)
                 lang = db_user['language'] if db_user else 'en'
-                text = get_text(lang, 'restock_notification', title=prod[f'title_{lang}'])
+                text = get_text(lang, 'restock_notification', title=prod[f'title_{lang}'], bot_username=bot_username, prod_id=prod_id)
                 await context.bot.send_message(chat_id=user_id, text=text, parse_mode=ParseMode.HTML)
             except Exception as e:
                 logger.error(f"Failed to notify user {user_id}: {e}")
