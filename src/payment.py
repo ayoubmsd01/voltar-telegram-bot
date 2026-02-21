@@ -4,23 +4,29 @@ from src.config import CRYPTO_BOT_TOKEN
 
 logger = logging.getLogger(__name__)
 
-crypto = AioCryptoPay(token=CRYPTO_BOT_TOKEN, network=Networks.MAIN_NET)
+_crypto_client = None
+
+def get_crypto_client():
+    global _crypto_client
+    if _crypto_client is None:
+        _crypto_client = AioCryptoPay(token=CRYPTO_BOT_TOKEN, network=Networks.MAIN_NET)
+    return _crypto_client
 
 async def create_crypto_invoice(amount: float) -> dict:
-    # amounts might need to be created in USDT/USD
-    # For AioCryptoPay, fiat is not directly settable in some older versions, 
-    # but we can set asset='USDT' assuming 1 USD = 1 USDT for simplicity
+    crypto = get_crypto_client()
     invoice = await crypto.create_invoice(asset='USDT', amount=amount)
     return {
-        'url': invoice.pay_url,
+        'url': invoice.bot_invoice_url,
         'invoice_id': invoice.invoice_id
     }
 
 async def check_crypto_invoice(invoice_id: int) -> bool:
+    crypto = get_crypto_client()
     invoices = await crypto.get_invoices(invoice_ids=invoice_id)
     if invoices:
         return invoices[0].status == 'paid'
     return False
 
 async def close_payment_session():
-    await crypto.session.close()
+    if _crypto_client:
+        await _crypto_client.close()
