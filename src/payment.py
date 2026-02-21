@@ -23,9 +23,11 @@ async def create_crypto_invoice(amount: float) -> dict:
 async def get_crypto_invoice_status(invoice_id: int) -> str:
     crypto = get_crypto_client()
     try:
-        invoices = await crypto.get_invoices(invoice_ids=invoice_id)
-        if invoices:
-            return invoices[0].status
+        invoice = await crypto.get_invoices(invoice_ids=invoice_id)
+        if invoice:
+            if isinstance(invoice, list):
+                return invoice[0].status
+            return invoice.status
     except Exception as e:
         logger.error(f"Error checking crypto bot invoice {invoice_id}: {e}")
     return "error"
