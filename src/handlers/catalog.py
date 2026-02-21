@@ -9,7 +9,7 @@ from src.db import (
     reserve_stock_item, release_stock_item, mark_stock_sold, add_purchase, update_user_balance,
     create_invoice, get_invoice, get_setting, add_favorite, get_all_products
 )
-from src.payment import create_crypto_invoice, check_crypto_invoice
+from src.payment import create_crypto_invoice, get_crypto_invoice_status
 from src.locales import get_text
 import aiosqlite
 from src.config import DB_PATH
@@ -416,7 +416,8 @@ async def check_order_payment(update: Update, context: ContextTypes.DEFAULT_TYPE
     invoice_id = query.data.split(':')[1]
     
     try:
-        is_paid = await check_crypto_invoice(int(invoice_id))
+        crypto_status = await get_crypto_invoice_status(int(invoice_id))
+        is_paid = crypto_status in ['paid', 'completed']
         
         async with aiosqlite.connect(DB_PATH) as db:
             db.row_factory = dict_factory

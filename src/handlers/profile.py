@@ -6,7 +6,7 @@ from telegram.ext import (
 )
 
 from src.db import (
-    get_user, get_user_purchases, get_user_topups, create_invoice, get_invoice, update_invoice_status, update_user_balance, process_invoice_payment
+    get_user, create_user, get_user_purchases, get_user_topups, create_invoice, get_invoice, update_invoice_status, update_user_balance, process_invoice_payment
 )
 from src.payment import create_crypto_invoice, get_crypto_invoice_status
 from src.locales import get_text
@@ -19,6 +19,10 @@ TOPUP_AMOUNT = 1
 async def profile_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     db_user = await get_user(user_id)
+    if not db_user:
+        await create_user(user_id, 'en', update.effective_user.username)
+        db_user = await get_user(user_id)
+        
     lang = db_user['language'] if db_user else 'en'
 
     text = get_text(
