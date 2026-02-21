@@ -102,7 +102,7 @@ async def init_db():
 async def get_db() -> aiosqlite.Connection:
     return await aiosqlite.connect(DB_PATH)
 
-async def dict_factory(cursor, row):
+def dict_factory(cursor, row):
     d = {}
     for idx, col in enumerate(cursor.description):
         d[col[0]] = row[idx]
