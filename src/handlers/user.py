@@ -113,7 +113,21 @@ async def help_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     db_user = await get_user(user_id)
     lang = db_user['language'] if db_user else 'en'
-    await update.message.reply_text(get_text(lang, 'help_text'))
+    
+    back_btn_text = "🇷🇺 ⬅ Назад" if lang == 'ru' else "🇬🇧 ⬅ Back"
+    keyboard = [[InlineKeyboardButton(back_btn_text, callback_data="help_back")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(
+        get_text(lang, 'help_text'),
+        parse_mode=ParseMode.HTML,
+        reply_markup=reply_markup
+    )
+
+async def help_back_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.message.delete()
 
 async def projects_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -126,6 +140,7 @@ def register_handlers(application: Application):
     
     application.add_handler(CommandHandler('start', start_cmd))
     application.add_handler(CallbackQueryHandler(lang_callback, pattern='^lang_'))
+    application.add_handler(CallbackQueryHandler(help_back_callback, pattern='^help_back$'))
     
     # Catching menu buttons across any language
     # We can use regex on translations

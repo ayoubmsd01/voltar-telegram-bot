@@ -45,7 +45,10 @@ LOCALES = {
                       "По истечении этого времени претензии не принимаются.\n\n"
                       "🛡 Гарантия распространяется только на валид.\n\n"
                       "🛒 Покупая товар, вы автоматически соглашаетесь с данными правилами.",
-        'help_text': "💬 По всем вопросам обращайтесь в поддержку.",
+        'help_text': "<b>🇷🇺 Служба поддержки</b>\n\n"
+                     "Если у вас возникли вопросы или проблемы с заказом, пожалуйста, свяжитесь с нашей поддержкой:\n\n"
+                     "📩 <a href=\"https://t.me/voltarsupport\">@voltarsupport</a>\n\n"
+                     "⏰ Время ответа зависит от загруженности.",
         'projects_text': "🌐 Список наших проектов...",
         # Admin
         'admin_panel': "🛠 Панель администратора",
@@ -124,7 +127,10 @@ LOCALES = {
                       "After this time, no claims will be accepted.\n\n"
                       "🛡 Warranty applies only to invalid accounts.\n\n"
                       "🛒 By purchasing the product, you automatically agree to these rules.",
-        'help_text': "💬 Please contact support for assistance.",
+        'help_text': "<b>🇬🇧 Support Service</b>\n\n"
+                     "If you have any questions or issues with your order, please contact our support:\n\n"
+                     "📩 <a href=\"https://t.me/voltarsupport\">@voltarsupport</a>\n\n"
+                     "⏰ Response time may vary depending on workload.",
         'projects_text': "🌐 List of our projects...",
         # Admin
         'admin_panel': "🛠 Admin Panel",
