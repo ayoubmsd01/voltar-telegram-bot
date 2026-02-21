@@ -1,5 +1,7 @@
 import logging
 import sys
+import os
+import aiosqlite
 from telegram.ext import Application
 from src.config import BOT_TOKEN
 from src.db import init_db
@@ -27,6 +29,37 @@ async def error_handler(update, context):
 async def post_init(application: Application):
     await init_db()
     logger.info("Database initialized")
+    
+    if os.environ.get("CLEAR_CATALOG_ON_START") == "1":
+        logger.info("Running catalog cleanup as requested by CLEAR_CATALOG_ON_START=1...")
+        from src.config import DB_PATH
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute('PRAGMA foreign_keys = OFF;')
+            await db.execute('BEGIN IMMEDIATE')
+            try:
+                # Count
+                async with db.execute('SELECT COUNT(*) FROM favorites') as cursor: favs_count = (await cursor.fetchone())[0]
+                async with db.execute('SELECT COUNT(*) FROM stock_items') as cursor: stock_count = (await cursor.fetchone())[0]
+                async with db.execute('SELECT COUNT(*) FROM products') as cursor: prod_count = (await cursor.fetchone())[0]
+                async with db.execute('SELECT COUNT(*) FROM categories') as cursor: cat_count = (await cursor.fetchone())[0]
+                
+                # Delete
+                await db.execute('DELETE FROM favorites')
+                await db.execute('DELETE FROM stock_items')
+                await db.execute('DELETE FROM products')
+                await db.execute('DELETE FROM categories')
+                await db.execute("DELETE FROM settings WHERE key = 'stock_update_msg'")
+                
+                # Reset sequences
+                await db.execute("DELETE FROM sqlite_sequence WHERE name IN ('categories', 'products', 'stock_items')")
+                
+                await db.commit()
+                logger.info("✅ Database catalog cleared successfully!")
+                logger.info(f"📊 Deleted: {cat_count} categories, {prod_count} products, {stock_count} stock items, {favs_count} favorites.")
+                logger.warning("⚠️ PLEASE REMOVE 'CLEAR_CATALOG_ON_START' FROM ENVIRONMENT VARIABLES TO PREVENT WIPING ON NEXT RESTART.")
+            except Exception as e:
+                await db.execute('ROLLBACK')
+                logger.error(f"❌ Error during catalog cleanup: {e}")
 
 async def post_stop(application: Application):
     await close_payment_session()
