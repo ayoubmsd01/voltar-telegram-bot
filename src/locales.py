@@ -35,7 +35,16 @@ LOCALES = {
         'purchase_success': "✅ Покупка успешна! Вот ваш товар:\n\n{content}",
         'purchase_insufficient_payment': "Ожидание оплаты...",
         'restock_notification': "📣 Внимание! Товар <b>{title}</b> снова в наличии!\n\nКупить: https://t.me/{bot_username}?start=prod_{prod_id}",
-        'rules_text': "📖 Правила использования бота...",
+        'rules_text': "<b>🇷🇺 Правила магазина</b>\n\n"
+                      "🔁 Замена производится в следующих случаях:\n"
+                      "• Аккаунт не валид\n\n"
+                      "❌ Замена НЕ производится в следующих случаях:\n"
+                      "• БАН при заливе\n"
+                      "• БАН при входе через софт\n\n"
+                      "⏳ Срок проверки аккаунта составляет 30 минут после покупки.\n"
+                      "По истечении этого времени претензии не принимаются.\n\n"
+                      "🛡 Гарантия распространяется только на валид.\n\n"
+                      "🛒 Покупая товар, вы автоматически соглашаетесь с данными правилами.",
         'help_text': "💬 По всем вопросам обращайтесь в поддержку.",
         'projects_text': "🌐 Список наших проектов...",
         # Admin
@@ -105,7 +114,16 @@ LOCALES = {
         'purchase_success': "✅ Purchase successful! Here is your item:\n\n{content}",
         'purchase_insufficient_payment': "Awaiting payment...",
         'restock_notification': "📣 Attention! <b>{title}</b> is back in stock!\n\nBuy now: https://t.me/{bot_username}?start=prod_{prod_id}",
-        'rules_text': "📖 Rules for using the bot...",
+        'rules_text': "<b>🇬🇧 Store Rules</b>\n\n"
+                      "🔁 Replacement is provided only in the following case:\n"
+                      "• Account is not valid\n\n"
+                      "❌ Replacement is NOT provided in the following cases:\n"
+                      "• BAN during traffic upload\n"
+                      "• BAN when logging in via software\n\n"
+                      "⏳ Account verification period is 30 minutes after purchase.\n"
+                      "After this time, no claims will be accepted.\n\n"
+                      "🛡 Warranty applies only to invalid accounts.\n\n"
+                      "🛒 By purchasing the product, you automatically agree to these rules.",
         'help_text': "💬 Please contact support for assistance.",
         'projects_text': "🌐 List of our projects...",
         # Admin

@@ -3,6 +3,7 @@ from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKe
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes, TypeHandler
 )
+from telegram.constants import ParseMode
 from telegram.ext import ApplicationHandlerStop
 
 from src.db import get_user, create_user, update_user_language, check_user_banned
@@ -106,7 +107,7 @@ async def rules_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     db_user = await get_user(user_id)
     lang = db_user['language'] if db_user else 'en'
-    await update.message.reply_text(get_text(lang, 'rules_text'))
+    await update.message.reply_text(get_text(lang, 'rules_text'), parse_mode=ParseMode.HTML)
 
 async def help_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
