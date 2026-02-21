@@ -11,7 +11,9 @@ from src.db import (
 )
 from src.payment import create_crypto_invoice, check_crypto_invoice
 from src.locales import get_text
-
+import aiosqlite
+from src.config import DB_PATH
+from src.db import dict_factory
 logger = logging.getLogger(__name__)
 
 async def stock_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -192,27 +194,6 @@ async def prod_fav_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await add_favorite(user_id, prod_id)
     await query.answer("⭐ Added to favorites!", show_alert=True)
 
-async def deliver_item(context: ContextTypes.DEFAULT_TYPE, user_id: int, product_id: int, item_id: int, price_paid: float):
-    # Process delivery
-    item = await get_stock_item(item_id)
-    product = await get_product(product_id)
-    db_user = await get_user(user_id)
-    lang = db_user['language']
-
-    content = item['content']
-    item_type = item['type']
-
-    await mark_stock_sold(item_id)
-    await add_purchase(user_id, product_id, item_id, price_paid)
-    
-    if item_type in ('code', 'link', 'text'):
-        text = get_text(lang, 'purchase_success', content=content)
-        await context.bot.send_message(chat_id=user_id, text=text)
-    elif item_type == 'file':
-        # the content should be a file_id from telegram
-        text = get_text(lang, 'purchase_success', content="[FILE]")
-        await context.bot.send_document(chat_id=user_id, document=content, caption=text)
-
 async def timeout_payment(context: ContextTypes.DEFAULT_TYPE):
     job = context.job
     data = job.data
@@ -221,64 +202,128 @@ async def timeout_payment(context: ContextTypes.DEFAULT_TYPE):
     paid_from_balance = data['paid_from_balance']
     item_id = data['item_id']
     
-    invoice = await get_invoice(invoice_id)
-    if invoice and invoice['status'] == 'active':
-        # Cancel order
-        await update_invoice_status(invoice_id, 'cancelled')
-        await release_stock_item(item_id)
-        if paid_from_balance > 0:
-            await update_user_balance(user_id, paid_from_balance)
+    try:
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = dict_factory
+            await db.execute('BEGIN IMMEDIATE')
             
-        db_user = await get_user(user_id)
-        lang = db_user['language']
-        # Optionally send a message
-        # await context.bot.send_message(chat_id=user_id, text=get_text(lang, 'btn_cancel_order'))
+            async with db.execute("SELECT status FROM invoices WHERE invoice_id = ?", (invoice_id,)) as cursor:
+                inv = await cursor.fetchone()
+                
+            if inv and inv['status'] == 'active':
+                await db.execute("UPDATE stock_items SET status = 'available', reserved_at = NULL WHERE id = ?", (item_id,))
+                if paid_from_balance > 0:
+                    await db.execute("UPDATE users SET balance = balance + ? WHERE id = ?", (paid_from_balance, user_id))
+                await db.execute("UPDATE invoices SET status = 'cancelled' WHERE invoice_id = ?", (invoice_id,))
+                await db.commit()
+                logger.info(f"Order cancelled by timeout: {invoice_id}")
+            else:
+                await db.execute('ROLLBACK')
+    except Exception as e:
+        logger.error(f"Error in timeout_payment: {e}")
 
 async def prod_buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    await query.answer()
+    
     user_id = update.effective_user.id
-    lang = (await get_user(user_id))['language']
+    db_user = await get_user(user_id)
+    lang = db_user['language'] if db_user else 'en'
     
     prod_id = int(query.data.split(':')[1])
     product = await get_product(prod_id)
     
-    item_id = await reserve_stock_item(prod_id)
-    if not item_id:
+    if not product or product['stock_count'] <= 0:
         await query.answer(get_text(lang, 'out_of_stock'), show_alert=True)
-        # Edit message to out of stock + fav button
-        product = await get_product(prod_id)
-        text = get_text(lang, 'product_page', title=product[f'title_{lang}'], desc=product[f'desc_{lang}'], price=product['price'], stock=0)
-        keyboard = [[InlineKeyboardButton(get_text(lang, 'btn_add_favorite'), callback_data=f"prod_fav:{prod_id}")],
-                    [InlineKeyboardButton(get_text(lang, 'btn_back'), callback_data=f"prod_back_items:{product['category_id']}")]]
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
+        if product:
+            text = get_text(lang, 'product_page', title=product[f'title_{lang}'], desc=product[f'desc_{lang}'], price=product['price'], stock=0)
+            keyboard = [[InlineKeyboardButton(get_text(lang, 'btn_add_favorite'), callback_data=f"prod_fav:{prod_id}")],
+                        [InlineKeyboardButton(get_text(lang, 'btn_back'), callback_data=f"prod_back_items:{product['category_id']}")]]
+            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
         return
 
     price = product['price']
-    db_user = await get_user(user_id)
     balance = db_user['balance']
+    need_crypto = max(0, round(price - balance, 2))
+    
+    invoice_id = None
+    url = None
+    if need_crypto > 0:
+        try:
+            crypto_data = await create_crypto_invoice(need_crypto)
+            invoice_id = str(crypto_data['invoice_id'])
+            url = crypto_data['url']
+        except Exception as e:
+            logger.error(f"Failed to create crypto invoice: {e}")
+            await query.answer("Payment service unavailable. Try again later.", show_alert=True)
+            return
 
-    if balance >= price:
-        # Scenario A
-        await update_user_balance(user_id, -price)
-        await deliver_item(context, user_id, prod_id, item_id, price)
-        await query.edit_message_text(get_text(lang, 'purchase_success', content="Delivery in progress..."))
-    else:
-        # Scenario B
-        need_crypto = round(price - balance, 2)
-        await update_user_balance(user_id, -balance)
-        
-        crypto_data = await create_crypto_invoice(need_crypto)
-        invoice_id = str(crypto_data['invoice_id'])
-        url = crypto_data['url']
-        
-        await create_invoice(invoice_id, user_id, need_crypto)
-        
-        # Schedule timeout in 15 mins (900 seconds)
+    try:
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = dict_factory
+            await db.execute('BEGIN IMMEDIATE')
+            
+            # Step 2: Check stock
+            async with db.execute("SELECT id, content, type FROM stock_items WHERE product_id = ? AND status = 'available' LIMIT 1", (prod_id,)) as cursor:
+                stock_row = await cursor.fetchone()
+                
+            if not stock_row:
+                await db.execute('ROLLBACK')
+                await query.answer(get_text(lang, 'out_of_stock'), show_alert=True)
+                product = await get_product(prod_id)
+                text = get_text(lang, 'product_page', title=product[f'title_{lang}'], desc=product[f'desc_{lang}'], price=product['price'], stock=0)
+                keyboard = [[InlineKeyboardButton(get_text(lang, 'btn_add_favorite'), callback_data=f"prod_fav:{prod_id}")],
+                            [InlineKeyboardButton(get_text(lang, 'btn_back'), callback_data=f"prod_back_items:{product['category_id']}")]]
+                await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
+                return
+                
+            stock_id = stock_row['id']
+            stock_content = stock_row['content']
+            stock_type = stock_row['type']
+            
+            # Step 3: Check balance
+            async with db.execute("SELECT balance FROM users WHERE id = ?", (user_id,)) as cursor:
+                user_row = await cursor.fetchone()
+            current_balance = user_row['balance'] if user_row else 0
+            
+            logger.info(f"BUY ATTEMPT - user_id={user_id}, product_id={prod_id}, stock_id={stock_id}, balance_before={current_balance}, price={price}")
+            
+            if current_balance >= price:
+                # Scenario A
+                logger.info("Scenario A: Full Balance")
+                await db.execute("UPDATE stock_items SET status = 'sold' WHERE id = ?", (stock_id,))
+                await db.execute("UPDATE users SET balance = balance - ?, total_spent = total_spent + ? WHERE id = ?", (price, price, user_id))
+                await db.execute("INSERT INTO purchases (user_id, product_id, stock_item_id, price_paid) VALUES (?, ?, ?, ?)", (user_id, prod_id, stock_id, price))
+                await db.commit()
+                
+                if stock_type in ('code', 'link', 'text'):
+                    text = get_text(lang, 'purchase_success', content=stock_content)
+                    await context.bot.send_message(chat_id=user_id, text=text)
+                elif stock_type == 'file':
+                    text = get_text(lang, 'purchase_success', content="[FILE]")
+                    await context.bot.send_document(chat_id=user_id, document=stock_content, caption=text)
+                    
+                await query.edit_message_text(get_text(lang, 'purchase_success', content="Delivery complete!"))
+                return
+                
+            else:
+                # Scenario B & C
+                paid_from_balance = current_balance
+                logger.info(f"Scenario B/C: invoice_id={invoice_id}, paid_from_balance={paid_from_balance}, type={stock_type}")
+                
+                await db.execute("UPDATE stock_items SET status = 'reserved', reserved_at = CURRENT_TIMESTAMP WHERE id = ?", (stock_id,))
+                if paid_from_balance > 0:
+                    await db.execute("UPDATE users SET balance = 0 WHERE id = ?", (user_id,))
+                
+                await db.execute('INSERT INTO invoices (invoice_id, user_id, amount) VALUES (?, ?, ?)', (invoice_id, user_id, need_crypto))
+                await db.commit()
+                
+        # Outside DB connection, schedule job queue & show UI
         context.job_queue.run_once(timeout_payment, 900, data={
             'user_id': user_id,
             'invoice_id': invoice_id,
-            'paid_from_balance': balance,
-            'item_id': item_id,
+            'paid_from_balance': paid_from_balance,
+            'item_id': stock_id,
             'prod_id': prod_id,
             'price': price
         }, name=f"timeout_{invoice_id}")
@@ -290,60 +335,129 @@ async def prod_buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         
         await query.edit_message_text(
-            f"{get_text(lang, 'topup_invoice_created', amount=need_crypto)}\n{get_text(lang, 'purchase_insufficient_payment')}",
+            f"{get_text(lang, 'topup_invoice_created', amount=f'${need_crypto}')}\n{get_text(lang, 'purchase_insufficient_payment')}",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
+        
+    except Exception as e:
+        logger.error(f"Error in prod_buy_callback: {e}")
+        await query.answer("An error occurred during purchase.", show_alert=True)
 
 async def check_order_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    await query.answer()
+    
     user_id = update.effective_user.id
-    lang = (await get_user(user_id))['language']
+    db_user = await get_user(user_id)
+    lang = db_user['language'] if db_user else 'en'
     invoice_id = query.data.split(':')[1]
     
-    # check db first
-    invoice = await get_invoice(invoice_id)
-    if invoice and invoice['status'] == 'paid':
-        await query.answer(get_text(lang, 'purchase_success', content=""), show_alert=True)
-        return
+    try:
+        is_paid = await check_crypto_invoice(int(invoice_id))
         
-    is_paid = await check_crypto_invoice(int(invoice_id))
-    if is_paid:
-        await update_invoice_status(invoice_id, 'paid')
-        
-        # Find job data to deliver item
-        jobs = context.job_queue.get_jobs_by_name(f"timeout_{invoice_id}")
-        if jobs:
-            job = jobs[0]
-            data = job.data
-            job.schedule_removal()
-            await deliver_item(context, user_id, data['prod_id'], data['item_id'], data['price'])
-            await query.edit_message_text(get_text(lang, 'purchase_success', content="Delivery complete!"))
-    else:
-        await query.answer("Payment not completed yet.", show_alert=True)
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = dict_factory
+            await db.execute('BEGIN IMMEDIATE')
+            
+            async with db.execute("SELECT * FROM invoices WHERE invoice_id = ?", (invoice_id,)) as cursor:
+                invoice = await cursor.fetchone()
+                
+            if not invoice:
+                await db.execute('ROLLBACK')
+                await query.answer("Invoice not found.", show_alert=True)
+                return
+                
+            if invoice['status'] == 'paid':
+                await db.execute('ROLLBACK')
+                await query.answer("Already paid.", show_alert=True)
+                return
+                
+            if invoice['status'] == 'cancelled':
+                await db.execute('ROLLBACK')
+                await query.answer("Order is already cancelled.", show_alert=True)
+                return
+                
+            if is_paid:
+                jobs = context.job_queue.get_jobs_by_name(f"timeout_{invoice_id}")
+                if not jobs:
+                    await db.execute('ROLLBACK')
+                    await query.answer("Delivery data lost. Contact support.", show_alert=True)
+                    return
+                    
+                job = jobs[0]
+                data = job.data
+                item_id = data['item_id']
+                prod_id = data['prod_id']
+                price = data['price']
+                
+                await db.execute("UPDATE invoices SET status = 'paid' WHERE invoice_id = ?", (invoice_id,))
+                await db.execute("UPDATE stock_items SET status = 'sold' WHERE id = ?", (item_id,))
+                await db.execute("UPDATE users SET total_spent = total_spent + ? WHERE id = ?", (price, user_id))
+                await db.execute("INSERT INTO purchases (user_id, product_id, stock_item_id, price_paid) VALUES (?, ?, ?, ?)", (user_id, prod_id, item_id, price))
+                
+                async with db.execute("SELECT content, type FROM stock_items WHERE id = ?", (item_id,)) as cursor:
+                    stock = await cursor.fetchone()
+                
+                await db.commit()
+                job.schedule_removal()
+                logger.info(f"Order {invoice_id} completed successfully.")
+                
+                stock_type = stock['type']
+                stock_content = stock['content']
+                if stock_type in ('code', 'link', 'text'):
+                    text = get_text(lang, 'purchase_success', content=stock_content)
+                    await context.bot.send_message(chat_id=user_id, text=text)
+                elif stock_type == 'file':
+                    text = get_text(lang, 'purchase_success', content="[FILE]")
+                    await context.bot.send_document(chat_id=user_id, document=stock_content, caption=text)
+                    
+                await query.edit_message_text(get_text(lang, 'purchase_success', content="Delivery complete!"))
+            else:
+                await db.execute('ROLLBACK')
+                await query.answer("Payment not completed yet.", show_alert=True)
+                
+    except Exception as e:
+        logger.error(f"Error in check_order_payment: {e}")
+        await query.answer("An error occurred.", show_alert=True)
 
 async def cancel_order_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    await query.answer()
+    
     user_id = update.effective_user.id
-    lang = (await get_user(user_id))['language']
     invoice_id = query.data.split(':')[1]
     
-    invoice = await get_invoice(invoice_id)
-    if invoice and invoice['status'] == 'active':
-        jobs = context.job_queue.get_jobs_by_name(f"timeout_{invoice_id}")
-        if jobs:
-            job = jobs[0]
-            data = job.data
-            job.schedule_removal()
+    try:
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = dict_factory
+            await db.execute('BEGIN IMMEDIATE')
             
-            await update_invoice_status(invoice_id, 'cancelled')
-            await release_stock_item(data['item_id'])
-            if data['paid_from_balance'] > 0:
-                await update_user_balance(user_id, data['paid_from_balance'])
+            async with db.execute("SELECT * FROM invoices WHERE invoice_id = ?", (invoice_id,)) as cursor:
+                invoice = await cursor.fetchone()
                 
-            await query.edit_message_text("❌ Order cancelled.")
-            return
-
-    await query.answer("Order already processed.", show_alert=True)
+            if invoice and invoice['status'] == 'active':
+                jobs = context.job_queue.get_jobs_by_name(f"timeout_{invoice_id}")
+                if jobs:
+                    job = jobs[0]
+                    data = job.data
+                    item_id = data['item_id']
+                    paid_from_balance = data['paid_from_balance']
+                    job.schedule_removal()
+                    
+                    await db.execute("UPDATE stock_items SET status = 'available', reserved_at = NULL WHERE id = ?", (item_id,))
+                    if paid_from_balance > 0:
+                        await db.execute("UPDATE users SET balance = balance + ? WHERE id = ?", (paid_from_balance, user_id))
+                    await db.execute("UPDATE invoices SET status = 'cancelled' WHERE invoice_id = ?", (invoice_id,))
+                    await db.commit()
+                    await query.edit_message_text("❌ Order cancelled.")
+                    logger.info(f"Order manually cancelled: {invoice_id}")
+                    return
+            await db.execute('ROLLBACK')
+            await query.answer("Order already processed or cancelled.", show_alert=True)
+            
+    except Exception as e:
+        logger.error(f"Error in cancel_order_payment: {e}")
+        await query.answer("An error occurred.", show_alert=True)
 
 def register_handlers(application: Application):
     msg_ru_en = lambda k: f"^({get_text('ru', k)}|{get_text('en', k)})$"
