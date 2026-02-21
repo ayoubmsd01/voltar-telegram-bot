@@ -227,10 +227,11 @@ async def prod_buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     
     user_id = update.effective_user.id
+    prod_id = int(query.data.split(':')[1])
+    logger.info(f"prod_buy started for user_id={user_id}, prod_id={prod_id}")
+    
     db_user = await get_user(user_id)
     lang = db_user['language'] if db_user else 'en'
-    
-    prod_id = int(query.data.split(':')[1])
     product = await get_product(prod_id)
     
     if not product or product['stock_count'] <= 0:
@@ -243,27 +244,12 @@ async def prod_buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     price = product['price']
-    balance = db_user['balance']
-    need_crypto = max(0, round(price - balance, 2))
-    
-    invoice_id = None
-    url = None
-    if need_crypto > 0:
-        try:
-            crypto_data = await create_crypto_invoice(need_crypto)
-            invoice_id = str(crypto_data['invoice_id'])
-            url = crypto_data['url']
-        except Exception as e:
-            logger.error(f"Failed to create crypto invoice: {e}")
-            await query.answer("Payment service unavailable. Try again later.", show_alert=True)
-            return
 
     try:
         async with aiosqlite.connect(DB_PATH) as db:
             db.row_factory = dict_factory
             await db.execute('BEGIN IMMEDIATE')
             
-            # Step 2: Check stock
             async with db.execute("SELECT id, content, type FROM stock_items WHERE product_id = ? AND status = 'available' LIMIT 1", (prod_id,)) as cursor:
                 stock_row = await cursor.fetchone()
                 
@@ -281,7 +267,6 @@ async def prod_buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             stock_content = stock_row['content']
             stock_type = stock_row['type']
             
-            # Step 3: Check balance
             async with db.execute("SELECT balance FROM users WHERE id = ?", (user_id,)) as cursor:
                 user_row = await cursor.fetchone()
             current_balance = user_row['balance'] if user_row else 0
@@ -289,7 +274,6 @@ async def prod_buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.info(f"BUY ATTEMPT - user_id={user_id}, product_id={prod_id}, stock_id={stock_id}, balance_before={current_balance}, price={price}")
             
             if current_balance >= price:
-                # Scenario A
                 logger.info("Scenario A: Full Balance")
                 await db.execute("UPDATE stock_items SET status = 'sold' WHERE id = ?", (stock_id,))
                 await db.execute("UPDATE users SET balance = balance - ?, total_spent = total_spent + ? WHERE id = ?", (price, price, user_id))
@@ -297,28 +281,69 @@ async def prod_buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await db.commit()
                 
                 if stock_type in ('code', 'link', 'text'):
-                    text = get_text(lang, 'purchase_success', content=stock_content)
-                    await context.bot.send_message(chat_id=user_id, text=text)
+                    text_msg = get_text(lang, 'purchase_success', content=stock_content)
+                    await context.bot.send_message(chat_id=user_id, text=text_msg)
                 elif stock_type == 'file':
-                    text = get_text(lang, 'purchase_success', content="[FILE]")
-                    await context.bot.send_document(chat_id=user_id, document=stock_content, caption=text)
+                    text_msg = get_text(lang, 'purchase_success', content="[FILE]")
+                    await context.bot.send_document(chat_id=user_id, document=stock_content, caption=text_msg)
                     
                 await query.edit_message_text(get_text(lang, 'purchase_success', content="Delivery complete!"))
                 return
-                
             else:
-                # Scenario B & C
                 paid_from_balance = current_balance
-                logger.info(f"Scenario B/C: invoice_id={invoice_id}, paid_from_balance={paid_from_balance}, type={stock_type}")
+                need_crypto = max(0, round(price - paid_from_balance, 2))
+                logger.info(f"Scenario B/C: paid_from_balance={paid_from_balance}, type={stock_type}, need_crypto={need_crypto}")
                 
                 await db.execute("UPDATE stock_items SET status = 'reserved', reserved_at = CURRENT_TIMESTAMP WHERE id = ?", (stock_id,))
                 if paid_from_balance > 0:
                     await db.execute("UPDATE users SET balance = 0 WHERE id = ?", (user_id,))
                 
-                await db.execute('INSERT INTO invoices (invoice_id, user_id, amount) VALUES (?, ?, ?)', (invoice_id, user_id, need_crypto))
                 await db.commit()
+                # DB transaction finishes here
                 
-        # Outside DB connection, schedule job queue & show UI
+    except Exception as e:
+        logger.error(f"Error in prod_buy_callback DB step 1: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        await query.answer("An error occurred during purchase preparation.", show_alert=True)
+        return
+
+    # Outside DB connection, create invoice
+    logger.info(f"Creating crypto invoice for {need_crypto}")
+    try:
+        crypto_data = await create_crypto_invoice(need_crypto)
+        invoice_id = str(crypto_data['invoice_id'])
+        url = crypto_data['url']
+        logger.info(f"Invoice created: {invoice_id} -> {url}")
+    except Exception as e:
+        logger.error(f"Failed to create crypto invoice: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        
+        # Rollback logic
+        try:
+            async with aiosqlite.connect(DB_PATH) as db:
+                db.row_factory = dict_factory
+                await db.execute('BEGIN IMMEDIATE')
+                await db.execute("UPDATE stock_items SET status = 'available', reserved_at = NULL WHERE id = ?", (stock_id,))
+                if paid_from_balance > 0:
+                    await db.execute("UPDATE users SET balance = balance + ? WHERE id = ?", (paid_from_balance, user_id))
+                await db.commit()
+                logger.info("Successfully rolled back DB state after CryptoBot API failure.")
+        except Exception as e_rb:
+            logger.error(f"Failed to rollback DB state: {e_rb}")
+            logger.error(traceback.format_exc())
+            
+        await query.answer("Payment service unavailable. Order cancelled.", show_alert=True)
+        return
+
+    try:
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = dict_factory
+            await db.execute('BEGIN IMMEDIATE')
+            await db.execute('INSERT INTO invoices (invoice_id, user_id, amount) VALUES (?, ?, ?)', (invoice_id, user_id, need_crypto))
+            await db.commit()
+            
         context.job_queue.run_once(timeout_payment, 900, data={
             'user_id': user_id,
             'invoice_id': invoice_id,
@@ -340,8 +365,11 @@ async def prod_buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         
     except Exception as e:
-        logger.error(f"Error in prod_buy_callback: {e}")
-        await query.answer("An error occurred during purchase.", show_alert=True)
+        logger.error(f"Failed to insert invoice or queue job: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        await query.answer("An error occurred. Check active orders.", show_alert=True)
+
 
 async def check_order_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -466,12 +494,12 @@ def register_handlers(application: Application):
     application.add_handler(MessageHandler(filters.Regex(msg_ru_en('btn_products')), products_base))
     
     # regex priority matching
-    application.add_handler(CallbackQueryHandler(prod_cat_callback, pattern='^prod_cat:'))
-    application.add_handler(CallbackQueryHandler(prod_item_callback, pattern='^prod_item:'))
-    application.add_handler(CallbackQueryHandler(prod_back_cats_callback, pattern='^prod_back_cats$'))
-    application.add_handler(CallbackQueryHandler(prod_back_items_callback, pattern='^prod_back_items:'))
-    application.add_handler(CallbackQueryHandler(prod_fav_callback, pattern='^prod_fav:'))
-    application.add_handler(CallbackQueryHandler(prod_buy_callback, pattern='^prod_buy:'))
+    application.add_handler(CallbackQueryHandler(prod_cat_callback, pattern=r'^prod_cat:\d+$'))
+    application.add_handler(CallbackQueryHandler(prod_item_callback, pattern=r'^prod_item:\d+$'))
+    application.add_handler(CallbackQueryHandler(prod_back_cats_callback, pattern=r'^prod_back_cats$'))
+    application.add_handler(CallbackQueryHandler(prod_back_items_callback, pattern=r'^prod_back_items:\d+$'))
+    application.add_handler(CallbackQueryHandler(prod_fav_callback, pattern=r'^prod_fav:\d+$'))
+    application.add_handler(CallbackQueryHandler(prod_buy_callback, pattern=r'^prod_buy:\d+$'))
     
-    application.add_handler(CallbackQueryHandler(check_order_payment, pattern='^chk_ord:'))
-    application.add_handler(CallbackQueryHandler(cancel_order_payment, pattern='^cnc_ord:'))
+    application.add_handler(CallbackQueryHandler(check_order_payment, pattern=r'^chk_ord:'))
+    application.add_handler(CallbackQueryHandler(cancel_order_payment, pattern=r'^cnc_ord:'))
