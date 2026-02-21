@@ -45,7 +45,7 @@ LOCALES = {
         'admin_manage_balances': "💰 Управление балансами",
         'admin_publish_stock': "📣 Опубликовать наличие",
         'admin_hide_stock': "🛑 Скрыть наличие",
-        'admin_reset_catalog': "🧹 Сбросить каталог",
+
         'admin_ban_user': "🚫 Забанить пользователя",
         'admin_unban_user': "✅ Разбанить",
         'admin_enter_cat_ru': "Введите название категории (RU):",
@@ -59,8 +59,7 @@ LOCALES = {
         'admin_stock_type': "Выберите тип товара (file/link/code):",
         'admin_stock_content': "Отправьте содержимое (Для кодов можно использовать перенос строки для добавления сразу нескольких):",
         'admin_stock_added': "✅ Stock добавлен!",
-        'admin_reset_confirm': "⚠️ Вы уверены? Отправьте 'ПОДТВЕРДИТЬ' для удаления всех товаров и категорий.",
-        'admin_reset_done': "✅ Каталог очищен.\nУдалено:\nТовары: {prod}\nКатегории: {cat}\nStock: {stock}\nИзбранное: {fav}",
+
         'admin_user_banned': "✅ Пользователь забанен.",
         'admin_user_unbanned': "✅ Пользователь разбанен.",
         'admin_balance_enter_id': "Введите ID пользователя:",
@@ -113,7 +112,7 @@ LOCALES = {
         'admin_manage_balances': "💰 Manage Balances",
         'admin_publish_stock': "📣 Publish Stock Update",
         'admin_hide_stock': "🛑 Hide Stock Update",
-        'admin_reset_catalog': "🧹 Reset Catalog",
+
         'admin_ban_user': "🚫 Ban User",
         'admin_unban_user': "✅ Unban User",
         'admin_enter_cat_ru': "Enter category name (RU):",
@@ -127,8 +126,7 @@ LOCALES = {
         'admin_stock_type': "Select item type (file/link/code):",
         'admin_stock_content': "Send content (For codes you can use newlines to add multiple):",
         'admin_stock_added': "✅ Stock added!",
-        'admin_reset_confirm': "⚠️ Are you sure? Send 'CONFIRM' to delete all products and categories.",
-        'admin_reset_done': "✅ Catalog cleared.\nDeleted:\nProducts: {prod}\nCategories: {cat}\nStock: {stock}\nFavorites: {fav}",
+
         'admin_user_banned': "✅ User banned.",
         'admin_user_unbanned': "✅ User unbanned.",
         'admin_balance_enter_id': "Enter User ID:",

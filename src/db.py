@@ -11,6 +11,7 @@ async def init_db():
         await db.execute('''
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY,
+                username TEXT,
                 language TEXT DEFAULT 'en',
                 balance REAL DEFAULT 0,
                 total_spent REAL DEFAULT 0,
@@ -18,6 +19,11 @@ async def init_db():
                 is_banned BOOLEAN DEFAULT 0
             )
         ''')
+        # Try altering if exists
+        try:
+            await db.execute('ALTER TABLE users ADD COLUMN username TEXT')
+        except:
+            pass
 
         await db.execute('''
             CREATE TABLE IF NOT EXISTS categories (
@@ -114,9 +120,10 @@ async def get_user(user_id: int) -> Optional[Dict]:
         async with db.execute('SELECT * FROM users WHERE id = ?', (user_id,)) as cursor:
             return await cursor.fetchone()
 
-async def create_user(user_id: int, language: str = 'en'):
+async def create_user(user_id: int, language: str = 'en', username: str = None):
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute('INSERT OR IGNORE INTO users (id, language) VALUES (?, ?)', (user_id, language))
+        await db.execute('INSERT OR IGNORE INTO users (id, language, username) VALUES (?, ?, ?)', (user_id, language, username))
+        await db.execute('UPDATE users SET username = ? WHERE id = ?', (username, user_id))
         await db.commit()
 
 async def update_user_language(user_id: int, language: str):
@@ -337,18 +344,8 @@ async def get_user_topups(user_id: int) -> List[Dict]:
         async with db.execute(query, (user_id,)) as cursor:
             return await cursor.fetchall()
 
-# Database Reset
-async def reset_catalog():
+async def get_all_users() -> List[Dict]:
     async with aiosqlite.connect(DB_PATH) as db:
-        # Get count of deleted elements
-        counts = {}
-        for table in ['stock_items', 'products', 'categories', 'favorites']:
-            async with db.execute(f'SELECT COUNT(*) FROM {table}') as cursor:
-                counts[table] = (await cursor.fetchone())[0]
-
-        await db.execute('DELETE FROM favorites')
-        await db.execute('DELETE FROM stock_items')
-        await db.execute('DELETE FROM products')
-        await db.execute('DELETE FROM categories')
-        await db.commit()
-        return counts
+        db.row_factory = dict_factory
+        async with db.execute('SELECT * FROM users ORDER BY registered_at ASC') as cursor:
+            return await cursor.fetchall()

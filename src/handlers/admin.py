@@ -9,7 +9,7 @@ from src.config import ADMIN_IDS
 from src.db import (
     get_user, get_categories, add_category, add_product,
     get_products_by_category, add_stock_item, get_all_products,
-    update_user_balance, set_setting, delete_setting, reset_catalog, set_user_ban, get_favorites
+    update_user_balance, set_setting, delete_setting, set_user_ban, get_favorites, get_all_users
 )
 from src.locales import get_text
 import re
@@ -23,8 +23,6 @@ ADD_PROD_CAT, ADD_PROD_TITLE_RU, ADD_PROD_TITLE_EN, ADD_PROD_DESC_RU, ADD_PROD_D
 ADD_STOCK_CAT, ADD_STOCK_PROD, ADD_STOCK_TYPE, ADD_STOCK_CONTENT = range(10, 14)
 # Balances
 BAL_USER_ID, BAL_AMOUNT = range(20, 22)
-# Reset Catalog
-RESET_CONFIRM = 30
 # Ban
 BAN_USER_ID = 40
 UNBAN_USER_ID = 41
@@ -52,7 +50,7 @@ async def admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
          InlineKeyboardButton(get_text(lang, 'admin_hide_stock'), callback_data="adm_hide_stock")],
         [InlineKeyboardButton(get_text(lang, 'admin_ban_user'), callback_data="adm_ban"),
          InlineKeyboardButton(get_text(lang, 'admin_unban_user'), callback_data="adm_unban")],
-        [InlineKeyboardButton(get_text(lang, 'admin_reset_catalog'), callback_data="adm_reset")]
+        [InlineKeyboardButton("🇷🇺 👥 Пользователи" if lang == 'ru' else "🇬🇧 👥 Users", callback_data="adm_users")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -271,21 +269,48 @@ async def adm_bal_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
-# --- Reset Catalog ---
-async def adm_reset_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# --- Users List ---
+async def adm_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text("⚠️ Are you sure? Send 'ПОДТВЕРДИТЬ' (or 'CONFIRM') to wipe all catalog data.")
-    return RESET_CONFIRM
-
-async def adm_reset_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip().upper()
-    if text in ['ПОДТВЕРДИТЬ', 'CONFIRM']:
-        counts = await reset_catalog()
-        await update.message.reply_text(f"✅ Catalog cleared.\nDeleted:\nProducts: {counts['products']}\nCategories: {counts['categories']}\nStock: {counts['stock_items']}\nFavorites: {counts['favorites']}")
+    user_id = update.effective_user.id
+    db_user = await get_user(user_id)
+    lang = db_user['language'] if db_user else 'en'
+    
+    users = await get_all_users()
+    total = len(users)
+    
+    if lang == 'ru':
+        header = f"👥 Зарегистрированные пользователи: {total}\n\n"
     else:
-        await update.message.reply_text("Action cancelled.")
-    return ConversationHandler.END
+        header = f"👥 Registered Users: {total}\n\n"
+        
+    messages = []
+    current_msg = header
+    
+    for i, u in enumerate(users, 1):
+        username = f"@{u['username']}" if u.get('username') else "NoUsername"
+        date_str = u['registered_at'].split()[0] if u.get('registered_at') else "Unknown"
+        line = f"{i}. {username} | ID: {u['id']} | {date_str}\n"
+        
+        if len(current_msg) + len(line) > 4000:
+            messages.append(current_msg)
+            current_msg = header + line
+        else:
+            current_msg += line
+            
+    if current_msg != header:
+        messages.append(current_msg)
+        
+    if not messages:
+        await query.edit_message_text("No users found.")
+        return
+        
+    for i, msg in enumerate(messages):
+        if i == 0:
+            await query.edit_message_text(msg)
+        else:
+            await context.bot.send_message(chat_id=user_id, text=msg)
 
 # --- Ban Flow ---
 async def adm_ban_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -405,15 +430,7 @@ def register_handlers(application: Application):
     )
     application.add_handler(unban_conv)
 
-    # Reset Conversation
-    reset_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(adm_reset_start, pattern='^adm_reset$')],
-        states={
-            RESET_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_reset_confirm)],
-        },
-        fallbacks=[CommandHandler('cancel', cancel_admin)]
-    )
-    application.add_handler(reset_conv)
+    application.add_handler(CallbackQueryHandler(adm_users, pattern='^adm_users$'))
 
     # Single callback handlers
     application.add_handler(CallbackQueryHandler(adm_pub_stock, pattern='^adm_pub_stock$'))

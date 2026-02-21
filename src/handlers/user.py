@@ -66,7 +66,8 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if not db_user:
         # User not in DB
-        await create_user(user_id, 'en') # default so that there's a record
+        username = update.effective_user.username
+        await create_user(user_id, 'en', username)
         # Prompt select language
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("🇷🇺 Русский", callback_data="lang_ru"), InlineKeyboardButton("🇬🇧 English", callback_data="lang_en")]
