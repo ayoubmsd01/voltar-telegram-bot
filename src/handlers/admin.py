@@ -9,9 +9,10 @@ from src.config import ADMIN_IDS
 from src.db import (
     get_user, get_categories, add_category, add_product,
     get_products_by_category, add_stock_item, get_all_products,
-    update_user_balance, set_setting, delete_setting, set_user_ban, get_favorites, get_all_users, get_purchases_page
+    update_user_balance, set_setting, delete_setting, set_user_ban, get_favorites, get_all_users, get_purchases_page, get_active_users
 )
 from src.locales import get_text
+from telegram.error import Forbidden
 import re
 
 logger = logging.getLogger(__name__)
@@ -354,8 +355,65 @@ async def adm_unban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def adm_pub_stock(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await set_setting('stock_update_msg', "📣 <b>Stock Update!</b> Fresh items are now available!")
-    await query.edit_message_text("✅ Announcement published.")
+    
+    banner_msg = "📣 <b>Stock Update! / Обновление ассортимента!</b>"
+    await set_setting('stock_update_msg', banner_msg)
+    
+    admin_id = update.effective_user.id
+    db_admin = await get_user(admin_id)
+    admin_lang = db_admin['language'] if db_admin else 'en'
+    
+    await query.edit_message_text(f"⏳ Broadcasting..." if admin_lang == 'en' else "⏳ Рассылка...")
+    
+    msg_en = "📣 <b>Stock Update!</b> Fresh items are now available!\nBuy: /start"
+    msg_ru = "📣 <b>Обновление ассортимента!</b> Доступны новые товары!\nКупить: /start"
+    
+    active_users = await get_active_users()
+    success_count = 0
+    blocked_count = 0
+    failed_count = 0
+    
+    logger.info(f"Broadcast starting. Fetching {len(active_users)} active users.")
+    if active_users:
+        logger.info(f"First 5 users: {active_users[:5]}")
+    
+    for u in active_users:
+        uid = u['id']
+        ulang = u.get('language', 'en')
+        text = msg_ru if ulang == 'ru' else msg_en
+        try:
+            await context.bot.send_message(chat_id=uid, text=text, parse_mode=ParseMode.HTML)
+            success_count += 1
+        except Forbidden:
+            logger.info(f"User {uid} blocked the bot (Forbidden).")
+            blocked_count += 1
+        except Exception as e:
+            if "Forbidden" in str(e) or "bot was blocked by the user" in str(e) or "chat not found" in str(e):
+                blocked_count += 1
+            else:
+                logger.error(f"Failed to send broadcast to {uid}: {e}")
+                failed_count += 1
+                
+    total = len(active_users)
+    
+    if admin_lang == 'ru':
+        report = (
+            "📣 <b>Уведомление отправлено.</b>\n\n"
+            f"✅ Отправлено: {success_count}\n"
+            f"🚫 Заблокировали: {blocked_count}\n"
+            f"❌ Ошибки: {failed_count}\n"
+            f"👥 Всего: {total}"
+        )
+    else:
+        report = (
+            "📣 <b>Stock update sent.</b>\n\n"
+            f"✅ Sent: {success_count}\n"
+            f"🚫 Blocked/Forbidden: {blocked_count}\n"
+            f"❌ Failed: {failed_count}\n"
+            f"👥 Total users: {total}"
+        )
+        
+    await context.bot.send_message(chat_id=admin_id, text=report, parse_mode=ParseMode.HTML)
 
 async def adm_hide_stock(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query

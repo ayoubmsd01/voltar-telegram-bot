@@ -359,6 +359,12 @@ async def get_all_users() -> List[Dict]:
         db.row_factory = dict_factory
         async with db.execute('SELECT * FROM users ORDER BY registered_at ASC') as cursor:
             return await cursor.fetchall()
+
+async def get_active_users() -> List[Dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = dict_factory
+        async with db.execute('SELECT id, language FROM users WHERE is_banned = 0 ORDER BY registered_at ASC') as cursor:
+            return await cursor.fetchall()
 async def get_purchases_page(offset: int = 0, limit: int = 10, user_id=None, order_id=None) -> Dict:
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = dict_factory
