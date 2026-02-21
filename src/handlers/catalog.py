@@ -453,6 +453,7 @@ async def check_order_payment(update: Update, context: ContextTypes.DEFAULT_TYPE
                 item_id = data['item_id']
                 prod_id = data['prod_id']
                 price = data['price']
+                paid_from_balance = data.get('paid_from_balance', 0)
                 
                 await db.execute("UPDATE invoices SET status = 'paid' WHERE invoice_id = ?", (invoice_id,))
                 await db.execute("UPDATE stock_items SET status = 'sold' WHERE id = ?", (item_id,))
