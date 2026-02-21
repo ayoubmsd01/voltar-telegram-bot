@@ -182,9 +182,24 @@ async def prod_item_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def prod_back_items_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    # Just redirect logic to category callback
-    query.data = f"prod_cat:{query.data.split(':')[1]}"
-    await prod_cat_callback(update, context)
+    await query.answer()
+    lang = (await get_user(update.effective_user.id))['language']
+    
+    cat_id = int(query.data.split(':')[1])
+    products = await get_products_by_category(cat_id)
+    
+    keyboard = []
+    for p in products:
+        if p['stock_count'] > 0:
+            p_name = p[f'title_{lang}']
+            pcs = "шт." if lang == "ru" else "pcs."
+            btn_text = f"{p_name} | {p['price']}$ | {p['stock_count']} {pcs}"
+            keyboard.append([InlineKeyboardButton(btn_text, callback_data=f"prod_item:{p['id']}")])
+    
+    keyboard.append([InlineKeyboardButton(get_text(lang, 'btn_back'), callback_data="prod_back_cats")])
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.edit_message_text(get_text(lang, 'products_select_item'), reply_markup=reply_markup)
 
 async def prod_fav_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -235,12 +250,13 @@ async def prod_buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     product = await get_product(prod_id)
     
     if not product or product['stock_count'] <= 0:
-        await query.answer(get_text(lang, 'out_of_stock'), show_alert=True)
         if product:
             text = get_text(lang, 'product_page', title=product[f'title_{lang}'], desc=product[f'desc_{lang}'], price=product['price'], stock=0)
             keyboard = [[InlineKeyboardButton(get_text(lang, 'btn_add_favorite'), callback_data=f"prod_fav:{prod_id}")],
                         [InlineKeyboardButton(get_text(lang, 'btn_back'), callback_data=f"prod_back_items:{product['category_id']}")]]
-            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
+            await query.edit_message_text(f"❌ {get_text(lang, 'out_of_stock')}\n\n{text}", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
+        else:
+            await query.edit_message_text(f"❌ {get_text(lang, 'out_of_stock')}")
         return
 
     price = product['price']
@@ -255,12 +271,10 @@ async def prod_buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
             if not stock_row:
                 await db.execute('ROLLBACK')
-                await query.answer(get_text(lang, 'out_of_stock'), show_alert=True)
-                product = await get_product(prod_id)
                 text = get_text(lang, 'product_page', title=product[f'title_{lang}'], desc=product[f'desc_{lang}'], price=product['price'], stock=0)
                 keyboard = [[InlineKeyboardButton(get_text(lang, 'btn_add_favorite'), callback_data=f"prod_fav:{prod_id}")],
                             [InlineKeyboardButton(get_text(lang, 'btn_back'), callback_data=f"prod_back_items:{product['category_id']}")]]
-                await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
+                await query.edit_message_text(f"❌ {get_text(lang, 'out_of_stock')}\n\n{text}", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
                 return
                 
             stock_id = stock_row['id']
@@ -305,7 +319,7 @@ async def prod_buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error in prod_buy_callback DB step 1: {e}")
         import traceback
         logger.error(traceback.format_exc())
-        await query.answer("An error occurred during purchase preparation.", show_alert=True)
+        await query.edit_message_text("❌ An error occurred during purchase preparation.")
         return
 
     # Outside DB connection, create invoice
@@ -334,7 +348,7 @@ async def prod_buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Failed to rollback DB state: {e_rb}")
             logger.error(traceback.format_exc())
             
-        await query.answer("Payment service unavailable. Order cancelled.", show_alert=True)
+        await query.edit_message_text("❌ Payment service unavailable. Order cancelled.")
         return
 
     try:
@@ -368,7 +382,7 @@ async def prod_buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Failed to insert invoice or queue job: {e}")
         import traceback
         logger.error(traceback.format_exc())
-        await query.answer("An error occurred. Check active orders.", show_alert=True)
+        await query.edit_message_text("❌ An error occurred while generating your order. Action was reverted.")
 
 
 async def check_order_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -392,24 +406,24 @@ async def check_order_payment(update: Update, context: ContextTypes.DEFAULT_TYPE
                 
             if not invoice:
                 await db.execute('ROLLBACK')
-                await query.answer("Invoice not found.", show_alert=True)
+                await query.edit_message_text("❌ Invoice not found.")
                 return
                 
             if invoice['status'] == 'paid':
                 await db.execute('ROLLBACK')
-                await query.answer("Already paid.", show_alert=True)
+                await query.edit_message_text("✅ Already paid.")
                 return
                 
             if invoice['status'] == 'cancelled':
                 await db.execute('ROLLBACK')
-                await query.answer("Order is already cancelled.", show_alert=True)
+                await query.edit_message_text("❌ Order is already cancelled.")
                 return
                 
             if is_paid:
                 jobs = context.job_queue.get_jobs_by_name(f"timeout_{invoice_id}")
                 if not jobs:
                     await db.execute('ROLLBACK')
-                    await query.answer("Delivery data lost. Contact support.", show_alert=True)
+                    await query.edit_message_text("❌ Delivery data lost. Contact support.")
                     return
                     
                 job = jobs[0]
@@ -442,11 +456,13 @@ async def check_order_payment(update: Update, context: ContextTypes.DEFAULT_TYPE
                 await query.edit_message_text(get_text(lang, 'purchase_success', content="Delivery complete!"))
             else:
                 await db.execute('ROLLBACK')
-                await query.answer("Payment not completed yet.", show_alert=True)
+                # Edit the message to show "Payment not completed yet" briefly, then restore?
+                # Actually, sending a quick message might be better since we can't show alerts.
+                await context.bot.send_message(chat_id=user_id, text="❌ Payment not completed yet.")
                 
     except Exception as e:
         logger.error(f"Error in check_order_payment: {e}")
-        await query.answer("An error occurred.", show_alert=True)
+        await context.bot.send_message(chat_id=user_id, text="❌ An error occurred check logs.")
 
 async def cancel_order_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -481,11 +497,11 @@ async def cancel_order_payment(update: Update, context: ContextTypes.DEFAULT_TYP
                     logger.info(f"Order manually cancelled: {invoice_id}")
                     return
             await db.execute('ROLLBACK')
-            await query.answer("Order already processed or cancelled.", show_alert=True)
+            await query.edit_message_text("❌ Order already processed or cancelled.")
             
     except Exception as e:
         logger.error(f"Error in cancel_order_payment: {e}")
-        await query.answer("An error occurred.", show_alert=True)
+        await query.edit_message_text("❌ An error occurred.")
 
 def register_handlers(application: Application):
     msg_ru_en = lambda k: f"^({get_text('ru', k)}|{get_text('en', k)})$"
