@@ -107,7 +107,7 @@ async def handle_deep_link(update: Update, context: ContextTypes.DEFAULT_TYPE, a
     elif arg.startswith('prod_'):
         prod_id = int(arg.split('_')[1])
         class DummyQuery:
-            data = f"prod_buy:{prod_id}"
+            data = f"prod_buy_dl:{prod_id}"
             async def answer(self, *args, **kwargs): pass
             async def edit_message_text(self, *args, **kwargs):
                 await update.message.reply_text(*args, **kwargs)
@@ -242,21 +242,32 @@ async def prod_buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     
     user_id = update.effective_user.id
+    is_dl = query.data.startswith('prod_buy_dl:')
     prod_id = int(query.data.split(':')[1])
-    logger.info(f"prod_buy started for user_id={user_id}, prod_id={prod_id}")
+    logger.info(f"prod_buy started for user_id={user_id}, prod_id={prod_id}, is_dl={is_dl}")
     
     db_user = await get_user(user_id)
     lang = db_user['language'] if db_user else 'en'
     product = await get_product(prod_id)
     
-    if not product or product['stock_count'] <= 0:
-        if product:
-            text = get_text(lang, 'product_page', title=product[f'title_{lang}'], desc=product[f'desc_{lang}'], price=product['price'], stock=0)
-            keyboard = [[InlineKeyboardButton(get_text(lang, 'btn_add_favorite'), callback_data=f"prod_fav:{prod_id}")],
-                        [InlineKeyboardButton(get_text(lang, 'btn_back'), callback_data=f"prod_back_items:{product['category_id']}")]]
-            await query.edit_message_text(f"❌ {get_text(lang, 'out_of_stock')}\n\n{text}", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
+    def _out_of_stock_screen(product_obj):
+        if not product_obj:
+            return f"❌ {get_text(lang, 'out_of_stock')}", None
+        
+        if is_dl:
+            text = get_text(lang, 'out_of_stock_dl', title=product_obj[f'title_{lang}'])
+            keyboard = [[InlineKeyboardButton(get_text(lang, 'btn_add_favorite_track'), callback_data=f"prod_fav:{prod_id}")],
+                        [InlineKeyboardButton(get_text(lang, 'btn_back'), callback_data="dl_back")]]
+            return text, InlineKeyboardMarkup(keyboard)
         else:
-            await query.edit_message_text(f"❌ {get_text(lang, 'out_of_stock')}")
+            text = get_text(lang, 'product_page', title=product_obj[f'title_{lang}'], desc=product_obj[f'desc_{lang}'], price=product_obj['price'], stock=0)
+            keyboard = [[InlineKeyboardButton(get_text(lang, 'btn_add_favorite'), callback_data=f"prod_fav:{prod_id}")],
+                        [InlineKeyboardButton(get_text(lang, 'btn_back'), callback_data=f"prod_back_items:{product_obj['category_id']}")]]
+            return f"❌ {get_text(lang, 'out_of_stock')}\n\n{text}", InlineKeyboardMarkup(keyboard)
+
+    if not product or product['stock_count'] <= 0:
+        text, markup = _out_of_stock_screen(product)
+        await query.edit_message_text(text, reply_markup=markup, parse_mode=ParseMode.HTML)
         return
 
     price = product['price']
@@ -271,10 +282,9 @@ async def prod_buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
             if not stock_row:
                 await db.execute('ROLLBACK')
-                text = get_text(lang, 'product_page', title=product[f'title_{lang}'], desc=product[f'desc_{lang}'], price=product['price'], stock=0)
-                keyboard = [[InlineKeyboardButton(get_text(lang, 'btn_add_favorite'), callback_data=f"prod_fav:{prod_id}")],
-                            [InlineKeyboardButton(get_text(lang, 'btn_back'), callback_data=f"prod_back_items:{product['category_id']}")]]
-                await query.edit_message_text(f"❌ {get_text(lang, 'out_of_stock')}\n\n{text}", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
+                product = await get_product(prod_id)
+                text, markup = _out_of_stock_screen(product)
+                await query.edit_message_text(text, reply_markup=markup, parse_mode=ParseMode.HTML)
                 return
                 
             stock_id = stock_row['id']
@@ -505,6 +515,11 @@ async def cancel_order_payment(update: Update, context: ContextTypes.DEFAULT_TYP
         logger.error(f"Error in cancel_order_payment: {e}")
         await query.edit_message_text("❌ An error occurred.")
 
+async def dl_back_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.message.delete()
+
 def register_handlers(application: Application):
     msg_ru_en = lambda k: f"^({get_text('ru', k)}|{get_text('en', k)})$"
     
@@ -518,6 +533,8 @@ def register_handlers(application: Application):
     application.add_handler(CallbackQueryHandler(prod_back_items_callback, pattern=r'^prod_back_items:\d+$'))
     application.add_handler(CallbackQueryHandler(prod_fav_callback, pattern=r'^prod_fav:\d+$'))
     application.add_handler(CallbackQueryHandler(prod_buy_callback, pattern=r'^prod_buy:\d+$'))
+    application.add_handler(CallbackQueryHandler(prod_buy_callback, pattern=r'^prod_buy_dl:\d+$'))
+    application.add_handler(CallbackQueryHandler(dl_back_callback, pattern=r'^dl_back$'))
     
     application.add_handler(CallbackQueryHandler(check_order_payment, pattern=r'^chk_ord:'))
     application.add_handler(CallbackQueryHandler(cancel_order_payment, pattern=r'^cnc_ord:'))
