@@ -320,6 +320,28 @@ async def update_invoice_status(invoice_id: str, status: str):
         await db.execute('UPDATE invoices SET status = ? WHERE invoice_id = ?', (status, invoice_id))
         await db.commit()
 
+async def process_invoice_payment(invoice_id: str, user_id: int, amount: float) -> bool:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute('BEGIN IMMEDIATE')
+        try:
+            db.row_factory = dict_factory
+            async with db.execute('SELECT status FROM invoices WHERE invoice_id = ?', (invoice_id,)) as cursor:
+                row = await cursor.fetchone()
+            
+            if not row or row['status'] == 'paid':
+                await db.execute('ROLLBACK')
+                return False
+                
+            await db.execute("UPDATE invoices SET status = 'paid' WHERE invoice_id = ?", (invoice_id,))
+            await db.execute("UPDATE users SET balance = balance + ? WHERE id = ?", (amount, user_id))
+            await db.commit()
+            return True
+        except Exception as e:
+            await db.execute('ROLLBACK')
+            import logging
+            logging.getLogger(__name__).error(f"Error in process_invoice_payment: {e}")
+            raise
+
 # Purchases
 async def add_purchase(user_id: int, product_id: int, stock_item_id: int, price_paid: float):
     async with aiosqlite.connect(DB_PATH) as db:

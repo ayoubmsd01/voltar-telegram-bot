@@ -20,12 +20,15 @@ async def create_crypto_invoice(amount: float) -> dict:
         'invoice_id': invoice.invoice_id
     }
 
-async def check_crypto_invoice(invoice_id: int) -> bool:
+async def get_crypto_invoice_status(invoice_id: int) -> str:
     crypto = get_crypto_client()
-    invoices = await crypto.get_invoices(invoice_ids=invoice_id)
-    if invoices:
-        return invoices[0].status == 'paid'
-    return False
+    try:
+        invoices = await crypto.get_invoices(invoice_ids=invoice_id)
+        if invoices:
+            return invoices[0].status
+    except Exception as e:
+        logger.error(f"Error checking crypto bot invoice {invoice_id}: {e}")
+    return "error"
 
 async def close_payment_session():
     if _crypto_client:

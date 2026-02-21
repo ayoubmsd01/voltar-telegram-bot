@@ -6,10 +6,11 @@ from telegram.ext import (
 )
 
 from src.db import (
-    get_user, get_user_purchases, get_user_topups, create_invoice, get_invoice, update_invoice_status, update_user_balance
+    get_user, get_user_purchases, get_user_topups, create_invoice, get_invoice, update_invoice_status, update_user_balance, process_invoice_payment
 )
-from src.payment import create_crypto_invoice, check_crypto_invoice
+from src.payment import create_crypto_invoice, get_crypto_invoice_status
 from src.locales import get_text
+import traceback
 
 logger = logging.getLogger(__name__)
 
@@ -92,27 +93,61 @@ async def prof_topup_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def check_topup_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    await query.answer()
+
     user_id = update.effective_user.id
     lang = (await get_user(user_id))['language']
     invoice_id = str(query.data.split(':')[1])
 
+    logger.info(f"Check payment requested - user_id={user_id}, invoice_id={invoice_id}")
+    
     invoice = await get_invoice(invoice_id)
-    if invoice:
-        if invoice['status'] == 'paid':
-            await query.answer("Already paid!", show_alert=True)
-            return
-            
-        is_paid = await check_crypto_invoice(int(invoice_id))
-        if is_paid:
-            # Idempotent topup check via unique invoice ID
-            await update_invoice_status(invoice_id, 'paid')
-            await update_user_balance(user_id, invoice['amount'])
-            
-            await query.edit_message_text(get_text(lang, 'invoice_paid_success', amount=f"${invoice['amount']:.2f}"))
-        else:
-            await query.answer(get_text(lang, 'invoice_not_paid'), show_alert=True)
-    else:
+    if not invoice:
+        logger.error(f"Invoice not found in DB: {invoice_id}")
         await query.answer(get_text(lang, 'invoice_not_paid'), show_alert=True)
+        return
+
+    amount = float(invoice['amount'])
+    
+    if invoice['status'] == 'paid':
+        logger.info(f"Invoice {invoice_id} is already marked as paid in DB. Skipping.")
+        await query.edit_message_text(get_text(lang, 'invoice_paid_success', amount=f"${amount:.2f}"))
+        return
+
+    try:
+        status = await get_crypto_invoice_status(int(invoice_id))
+        logger.info(f"CryptoBot status for invoice {invoice_id}: {status}")
+        
+        if status in ['paid', 'completed']:
+            # Idempotent database update
+            success = await process_invoice_payment(invoice_id, user_id, amount)
+            if success:
+                logger.info(f"✅ Successfully processed payment. Balance updated for {user_id} by {amount}.")
+                # Fetch new balance
+                user_data = await get_user(user_id)
+                new_balance = float(user_data['balance'])
+                
+                success_msg = f"✅ Balance updated successfully!\n" if lang == 'en' else f"✅ Баланс успешно обновлен!\n"
+                success_msg += f"Topup Amount: ${amount:.2f}\n" if lang == 'en' else f"Сумма пополнения: ${amount:.2f}\n"
+                success_msg += f"New Balance: ${new_balance:.2f}" if lang == 'en' else f"Текущий баланс: ${new_balance:.2f}"
+                
+                await query.edit_message_text(success_msg)
+            else:
+                logger.info(f"Payment was somehow already processed concurrently for {invoice_id}.")
+                await query.edit_message_text(get_text(lang, 'invoice_paid_success', amount=f"${amount:.2f}"))
+                
+        elif status in ['active', 'pending']:
+            await query.answer("Payment not received yet. ⏳" if lang == 'en' else "Оплата еще не поступила. ⏳", show_alert=True)
+        elif status in ['expired', 'cancelled']:
+            await update_invoice_status(invoice_id, status)
+            msg = "The invoice has expired or been cancelled. Please create a new top-up." if lang == 'en' else "Счет истек или был отменен. Пожалуйста, создайте новый счет."
+            keyboard = [[InlineKeyboardButton(get_text(lang, 'btn_topup'), callback_data="prof_topup")]]
+            await query.edit_message_text(f"❌ {msg}", reply_markup=InlineKeyboardMarkup(keyboard))
+        else:
+            await query.answer("Payment check failed. Please try again." if lang == 'en' else "Ошибка при проверке статуса. Повторите попытку.", show_alert=True)
+    except Exception as e:
+        logger.error(f"Exception during check_topup_payment: {e}\n{traceback.format_exc()}")
+        await query.answer("An error occurred during verification." if lang == 'en' else "При проверке произошла ошибка.", show_alert=True)
 
 async def prof_purchases(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
