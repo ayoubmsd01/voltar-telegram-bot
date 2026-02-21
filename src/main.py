@@ -34,8 +34,31 @@ async def post_stop(application: Application):
 
 def main():
     if not BOT_TOKEN:
-        logger.error("BOT_TOKEN is not set.")
-        sys.exit(1)
+        logger.error("BOT_TOKEN is not set. Assuming this is the placeholder web service. Starting dummy server...")
+        import os
+        import time
+        import http.server
+        import socketserver
+        
+        PORT = int(os.environ.get("PORT", 8080))
+        class HealthCheckHandler(http.server.SimpleHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-type", "text/plain")
+                self.end_headers()
+                self.wfile.write(b"OK")
+            def log_message(self, format, *args):
+                pass
+        
+        try:
+            with socketserver.TCPServer(("", PORT), HealthCheckHandler) as httpd:
+                logger.info(f"Dummy healthcheck server starting at port {PORT}")
+                httpd.serve_forever()
+        except Exception as e:
+            logger.error(f"Dummy server failed to start: {e}. Sleeping forever instead.")
+            while True:
+                time.sleep(3600)
+        return
 
     application = Application.builder().token(BOT_TOKEN).post_init(post_init).post_stop(post_stop).build()
 
