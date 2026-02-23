@@ -687,7 +687,8 @@ def register_handlers(application: Application):
             ADD_PROD_DESC_EN: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_add_prod_desc_en)],
             ADD_PROD_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_add_prod_price)],
         },
-        fallbacks=[CommandHandler('cancel', cancel_admin)]
+        fallbacks=[CommandHandler('cancel', cancel_admin)],
+        allow_reentry=True
     )
     application.add_handler(prod_conv)
 
@@ -698,7 +699,8 @@ def register_handlers(application: Application):
             ADD_CAT_RU: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_add_cat_ru)],
             ADD_CAT_EN: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_add_cat_en)],
         },
-        fallbacks=[CommandHandler('cancel', cancel_admin)]
+        fallbacks=[CommandHandler('cancel', cancel_admin)],
+        allow_reentry=True
     )
     application.add_handler(cat_conv)
 
@@ -711,7 +713,8 @@ def register_handlers(application: Application):
             ADD_STOCK_TYPE: [CallbackQueryHandler(adm_add_stock_type, pattern='^stktyp:')],
             ADD_STOCK_CONTENT: [MessageHandler((filters.TEXT | filters.Document.ALL) & ~filters.COMMAND, adm_add_stock_content)],
         },
-        fallbacks=[CommandHandler('cancel', cancel_admin)]
+        fallbacks=[CommandHandler('cancel', cancel_admin)],
+        allow_reentry=True
     )
     application.add_handler(stock_conv)
 
@@ -722,7 +725,8 @@ def register_handlers(application: Application):
             BAL_USER_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_bal_user)],
             BAL_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_bal_amount)],
         },
-        fallbacks=[CommandHandler('cancel', cancel_admin)]
+        fallbacks=[CommandHandler('cancel', cancel_admin)],
+        allow_reentry=True
     )
     application.add_handler(bal_conv)
     
