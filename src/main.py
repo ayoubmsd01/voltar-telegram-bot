@@ -16,6 +16,8 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+# httpx INFO logs can contain Telegram Bot API tokens in request URLs.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 import traceback
 import json
