@@ -79,8 +79,13 @@ async def prof_topup_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(get_text(lang, 'invalid_amount'))
         return TOPUP_AMOUNT
 
-    # Create CryptoBot invoice
-    crypto_data = await create_crypto_invoice(amount)
+    # Reject unavailable payments safely, without crashing or creating a phantom invoice.
+    try:
+        crypto_data = await create_crypto_invoice(amount)
+    except Exception:
+        logger.exception("Crypto Pay invoice creation failed")
+        await update.message.reply_text("⚠️ Crypto payments are temporarily unavailable. No charge was made.")
+        return ConversationHandler.END
     invoice_id = str(crypto_data['invoice_id'])
     url = crypto_data['url']
 
@@ -107,9 +112,7 @@ async def check_topup_payment(update: Update, context: ContextTypes.DEFAULT_TYPE
     lang = (await get_user(user_id))['language']
     invoice_id = str(query.data.split(':')[1])
 
-    # DEBUG MESSAGE FOR USER
-    # Disable after confirmed working.
-    await context.bot.send_message(chat_id=user_id, text=f"DEBUG: check handler reached ✅\nInvoice: {invoice_id}")
+    # The verification callback must never send debug details to customers.
 
     logger.info(f"DB_PATH(topup_check): {os.path.abspath(DB_PATH)}")
     logger.info(f"Check payment requested - user_id={user_id}, invoice_id={invoice_id}")
@@ -118,6 +121,10 @@ async def check_topup_payment(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not invoice:
         logger.error(f"Invoice not found in DB: {invoice_id}")
         await query.answer(get_text(lang, 'invoice_not_paid') if get_text(lang, 'invoice_not_paid') else "Invoice not found", show_alert=True)
+        return
+
+    if int(invoice["user_id"]) != user_id:
+        await query.answer("This payment does not belong to your account.", show_alert=True)
         return
 
     amount = float(invoice['amount'])
