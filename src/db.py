@@ -325,14 +325,16 @@ async def process_invoice_payment(invoice_id: str, user_id: int, amount: float) 
         await db.execute('BEGIN IMMEDIATE')
         try:
             db.row_factory = dict_factory
-            async with db.execute('SELECT status FROM invoices WHERE invoice_id = ?', (invoice_id,)) as cursor:
+            async with db.execute('SELECT user_id, amount, status FROM invoices WHERE invoice_id = ?', (invoice_id,)) as cursor:
                 row = await cursor.fetchone()
-            
-            if not row or row['status'] == 'paid':
+
+            # Only the invoice owner can be credited, for the amount stored by the server.
+            if (not row or int(row['user_id']) != int(user_id)
+                    or row['status'] != 'active' or abs(float(row['amount']) - float(amount)) > 0.000001):
                 await db.execute('ROLLBACK')
                 return False
-                
-            await db.execute("UPDATE invoices SET status = 'paid' WHERE invoice_id = ?", (invoice_id,))
+
+            await db.execute("UPDATE invoices SET status = 'paid' WHERE invoice_id = ? AND status = 'active'", (invoice_id,))
             await db.execute("UPDATE users SET balance = balance + ? WHERE id = ?", (amount, user_id))
             await db.commit()
             return True
