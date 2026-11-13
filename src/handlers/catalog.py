@@ -325,6 +325,11 @@ async def prod_buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.edit_message_text(get_text(lang, 'purchase_success', content="Delivery complete!"))
                 return
             else:
+                from src.config import CRYPTO_BOT_TOKEN
+                if not CRYPTO_BOT_TOKEN:
+                    await db.execute('ROLLBACK')
+                    await query.edit_message_text("⚠️ Crypto payments are temporarily unavailable. Your balance and stock were not changed.")
+                    return
                 paid_from_balance = current_balance
                 need_crypto = max(0, round(price - paid_from_balance, 2))
                 logger.info(f"Scenario B/C: paid_from_balance={paid_from_balance}, type={stock_type}, need_crypto={need_crypto}")
@@ -431,6 +436,11 @@ async def check_order_payment(update: Update, context: ContextTypes.DEFAULT_TYPE
                 await query.edit_message_text("❌ Invoice not found.")
                 return
                 
+            if int(invoice['user_id']) != user_id:
+                await db.execute('ROLLBACK')
+                await query.answer("This invoice belongs to another account.", show_alert=True)
+                return
+
             if invoice['status'] == 'paid':
                 await db.execute('ROLLBACK')
                 await query.edit_message_text("✅ Already paid.")
@@ -503,6 +513,11 @@ async def cancel_order_payment(update: Update, context: ContextTypes.DEFAULT_TYP
             async with db.execute("SELECT * FROM invoices WHERE invoice_id = ?", (invoice_id,)) as cursor:
                 invoice = await cursor.fetchone()
                 
+            if invoice and int(invoice['user_id']) != user_id:
+                await db.execute('ROLLBACK')
+                await query.answer("This invoice belongs to another account.", show_alert=True)
+                return
+
             if invoice and invoice['status'] == 'active':
                 jobs = context.job_queue.get_jobs_by_name(f"timeout_{invoice_id}")
                 if jobs:
