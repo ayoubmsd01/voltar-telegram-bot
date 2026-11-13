@@ -5,6 +5,7 @@ import aiosqlite
 from telegram.ext import Application
 from src.config import BOT_TOKEN
 from src.db import init_db
+from src.config import DB_PATH
 from src.payment import close_payment_session
 
 # Import handlers
@@ -26,9 +27,48 @@ async def error_handler(update, context):
     tb_string = "".join(tb_list)
     logger.error(f"Full Traceback:\n{tb_string}")
 
+async def import_legacy_users():
+    """Idempotent import: only missing users are inserted; existing records are unchanged."""
+    payload = os.getenv("LEGACY_USERS_JSON")
+    if not payload:
+        return
+    try:
+        records = json.loads(payload)
+        if not isinstance(records, list):
+            raise ValueError("expected a list")
+        validated = []
+        for record in records:
+            user_id = int(record["id"])
+            date = str(record.get("registered_at") or "").strip()
+            if user_id <= 0 or len(date) != 10 or date[4] != "-" or date[7] != "-":
+                raise ValueError("invalid user ID or registration date")
+            username = record.get("username")
+            if username is not None and (not isinstance(username, str) or len(username) > 100):
+                raise ValueError("invalid username")
+            validated.append((user_id, username, "en", date + " 00:00:00"))
+        if len({r[0] for r in validated}) != len(validated):
+            raise ValueError("duplicate IDs in import")
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute("BEGIN IMMEDIATE")
+            before = db.total_changes
+            await db.executemany(
+                "INSERT OR IGNORE INTO users (id, username, language, registered_at) VALUES (?, ?, ?, ?)",
+                validated,
+            )
+            imported = db.total_changes - before
+            await db.commit()
+            async with db.execute("SELECT COUNT(*) FROM users") as cursor:
+                total = (await cursor.fetchone())[0]
+        logger.info("Legacy user migration: input=%d, inserted=%d, total_users=%d", len(validated), imported, total)
+    except Exception:
+        logger.exception("Legacy user import failed; no existing user records were changed")
+        raise
+
+
 async def post_init(application: Application):
     await init_db()
     logger.info("Database initialized")
+    await import_legacy_users()
     
     if os.environ.get("CLEAR_CATALOG_ON_START") == "1":
         from src.config import DB_PATH
