@@ -8,6 +8,8 @@ _crypto_client = None
 
 def get_crypto_client():
     global _crypto_client
+    if not CRYPTO_BOT_TOKEN or not CRYPTO_BOT_TOKEN.strip():
+        raise RuntimeError("Crypto Pay is not configured (CRYPTO_BOT_TOKEN missing)")
     if _crypto_client is None:
         _crypto_client = AioCryptoPay(token=CRYPTO_BOT_TOKEN, network=Networks.MAIN_NET)
     return _crypto_client
