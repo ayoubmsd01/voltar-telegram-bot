@@ -32,10 +32,24 @@ BAN_USER_ID = 40
 UNBAN_USER_ID = 41
 
 def admin_required(func):
+    """Check admin permissions and explain missing access instead of silently ignoring /admin."""
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
-        user_id = update.effective_user.id
-        if user_id not in ADMIN_IDS:
+        user = update.effective_user
+        if user is None:
             return
+        user_id = user.id
+        if user_id not in ADMIN_IDS:
+            logger.warning("Admin access denied for Telegram user ID %s", user_id)
+            if update.message:
+                await update.message.reply_text(
+                    f"⛔ Admin access is not enabled for this Telegram account.\n"
+                    f"Your Telegram user ID: {user_id}\n"
+                    "Ask the bot owner to add this ID to ADMIN_IDS."
+                )
+            elif update.callback_query:
+                await update.callback_query.answer("Admin access denied.", show_alert=True)
+            return
+        logger.info("Admin access granted for Telegram user ID %s", user_id)
         return await func(update, context, *args, **kwargs)
     return wrapper
 
