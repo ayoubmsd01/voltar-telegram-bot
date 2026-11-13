@@ -277,8 +277,6 @@ def register_handlers(application: Application):
     application.add_handler(CallbackQueryHandler(prof_purchases, pattern='^prof_purchases$'))
     application.add_handler(CallbackQueryHandler(prof_topups, pattern='^prof_topups$'))
     application.add_handler(CallbackQueryHandler(prof_back, pattern='^prof_back$'))
-    application.add_handler(CallbackQueryHandler(select_topup_provider, pattern=r'^topup_provider:(cryptobot|xrocket)
-
-))
+    application.add_handler(CallbackQueryHandler(select_topup_provider, pattern=r'^topup_provider:(cryptobot|xrocket)$'))
     application.add_handler(CallbackQueryHandler(check_topup_payment, pattern='^chk_topup:'))
 
