@@ -687,14 +687,22 @@ def cancel_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     update.message.reply_text("Admin action cancelled.")
     return ConversationHandler.END
 
+class AdminCallbackQueryHandler(CallbackQueryHandler):
+    """Restrict administrative callback actions to authorized Telegram IDs."""
+
+    def check_update(self, update):
+        user = getattr(update, "effective_user", None)
+        return bool(user and user.id in ADMIN_IDS) and super().check_update(update)
+
+
 def register_handlers(application: Application):
     application.add_handler(CommandHandler('admin', admin_cmd))
     
     # Product Conversation
     prod_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(adm_add_prod_start, pattern='^adm_add_prod$')],
+        entry_points=[AdminCallbackQueryHandler(adm_add_prod_start, pattern='^adm_add_prod$')],
         states={
-            ADD_PROD_CAT: [CallbackQueryHandler(adm_add_prod_cat, pattern='^selcat:')],
+            ADD_PROD_CAT: [AdminCallbackQueryHandler(adm_add_prod_cat, pattern='^selcat:')],
             ADD_PROD_TITLE_RU: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_add_prod_title_ru)],
             ADD_PROD_TITLE_EN: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_add_prod_title_en)],
             ADD_PROD_DESC_RU: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_add_prod_desc_ru)],
@@ -708,7 +716,7 @@ def register_handlers(application: Application):
 
     # Category Conversation
     cat_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(adm_add_cat_start, pattern='^adm_add_cat_ru$')],
+        entry_points=[AdminCallbackQueryHandler(adm_add_cat_start, pattern='^adm_add_cat_ru$')],
         states={
             ADD_CAT_RU: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_add_cat_ru)],
             ADD_CAT_EN: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_add_cat_en)],
@@ -720,11 +728,11 @@ def register_handlers(application: Application):
 
     # Stock Conversation
     stock_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(adm_add_stock_start, pattern='^adm_add_stock$')],
+        entry_points=[AdminCallbackQueryHandler(adm_add_stock_start, pattern='^adm_add_stock$')],
         states={
-            ADD_STOCK_CAT: [CallbackQueryHandler(adm_add_stock_cat, pattern='^stkcat:')],
-            ADD_STOCK_PROD: [CallbackQueryHandler(adm_add_stock_prod, pattern='^stkprod:')],
-            ADD_STOCK_TYPE: [CallbackQueryHandler(adm_add_stock_type, pattern='^stktyp:')],
+            ADD_STOCK_CAT: [AdminCallbackQueryHandler(adm_add_stock_cat, pattern='^stkcat:')],
+            ADD_STOCK_PROD: [AdminCallbackQueryHandler(adm_add_stock_prod, pattern='^stkprod:')],
+            ADD_STOCK_TYPE: [AdminCallbackQueryHandler(adm_add_stock_type, pattern='^stktyp:')],
             ADD_STOCK_CONTENT: [MessageHandler((filters.TEXT | filters.Document.ALL) & ~filters.COMMAND, adm_add_stock_content)],
         },
         fallbacks=[CommandHandler('cancel', cancel_admin)],
@@ -734,7 +742,7 @@ def register_handlers(application: Application):
 
     # Balances Conversation
     bal_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(adm_bal_start, pattern='^adm_balances$')],
+        entry_points=[AdminCallbackQueryHandler(adm_bal_start, pattern='^adm_balances$')],
         states={
             BAL_USER_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_bal_user)],
             BAL_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_bal_amount)],
@@ -746,44 +754,44 @@ def register_handlers(application: Application):
     
     # Ban Conversations
     ban_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(adm_ban_start, pattern='^adm_ban$')],
+        entry_points=[AdminCallbackQueryHandler(adm_ban_start, pattern='^adm_ban$')],
         states={BAN_USER_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_ban_user)]},
         fallbacks=[CommandHandler('cancel', cancel_admin)]
     )
     application.add_handler(ban_conv)
     
     unban_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(adm_unban_start, pattern='^adm_unban$')],
+        entry_points=[AdminCallbackQueryHandler(adm_unban_start, pattern='^adm_unban$')],
         states={UNBAN_USER_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_unban_user)]},
         fallbacks=[CommandHandler('cancel', cancel_admin)]
     )
     application.add_handler(unban_conv)
 
-    application.add_handler(CallbackQueryHandler(adm_users, pattern='^adm_users$'))
+    application.add_handler(AdminCallbackQueryHandler(adm_users, pattern='^adm_users$'))
 
     # History Search Conversations
     hist_search_user_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(adm_search_user_start, pattern='^adm_history:search_user$')],
+        entry_points=[AdminCallbackQueryHandler(adm_search_user_start, pattern='^adm_history:search_user$')],
         states={SEARCH_HISTORY_USER: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_search_user_process)]},
         fallbacks=[CommandHandler('cancel', cancel_admin)]
     )
     application.add_handler(hist_search_user_conv)
     
     hist_search_order_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(adm_search_order_start, pattern='^adm_history:search_order$')],
+        entry_points=[AdminCallbackQueryHandler(adm_search_order_start, pattern='^adm_history:search_order$')],
         states={SEARCH_HISTORY_ORDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_search_order_process)]},
         fallbacks=[CommandHandler('cancel', cancel_admin)]
     )
     application.add_handler(hist_search_order_conv)
-    application.add_handler(CallbackQueryHandler(adm_hide_stock, pattern='^adm_hide_stock$'))
+    application.add_handler(AdminCallbackQueryHandler(adm_hide_stock, pattern='^adm_hide_stock$'))
     
-    application.add_handler(CallbackQueryHandler(adm_clear_cat_warn, pattern='^adm_clear_cat_warn$'))
-    application.add_handler(CallbackQueryHandler(adm_clear_cat_confirm, pattern='^adm_clear_cat_confirm$'))
-    application.add_handler(CallbackQueryHandler(admin_home, pattern='^admin_home$'))
+    application.add_handler(AdminCallbackQueryHandler(adm_clear_cat_warn, pattern='^adm_clear_cat_warn$'))
+    application.add_handler(AdminCallbackQueryHandler(adm_clear_cat_confirm, pattern='^adm_clear_cat_confirm$'))
+    application.add_handler(AdminCallbackQueryHandler(admin_home, pattern='^admin_home$'))
     
-    application.add_handler(CallbackQueryHandler(adm_history_page, pattern='^adm_history:page:'))
-    application.add_handler(CallbackQueryHandler(history_back, pattern='^adm_history:back$'))
+    application.add_handler(AdminCallbackQueryHandler(adm_history_page, pattern='^adm_history:page:'))
+    application.add_handler(AdminCallbackQueryHandler(history_back, pattern='^adm_history:back$'))
 
     # Single callback handlers
-    application.add_handler(CallbackQueryHandler(adm_pub_stock, pattern='^adm_pub_stock$'))
-    application.add_handler(CallbackQueryHandler(adm_hide_stock, pattern='^adm_hide_stock$'))
+    application.add_handler(AdminCallbackQueryHandler(adm_pub_stock, pattern='^adm_pub_stock$'))
+    application.add_handler(AdminCallbackQueryHandler(adm_hide_stock, pattern='^adm_hide_stock$'))
