@@ -233,7 +233,8 @@ async def prof_topups(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "💵 <b>My Top-ups:</b>\n\n"
     for t in topups:
         date = t['created_at'].split()[0]
-        text += f"- ${t['amount']} | {date} | CryptoBot\n"
+        provider_name = "xRocket" if t.get("provider") == "xrocket" else "CryptoBot"
+        text += f"- ${t['amount']} | {date} | {provider_name}\\n"
 
     keyboard = [[InlineKeyboardButton(get_text(lang, 'btn_back'), callback_data="prof_back")]]
     await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
