@@ -106,6 +106,14 @@ async def init_db():
             )
         ''')
 
+        # Provider-aware topups: legacy invoices remain CryptoBot invoices.
+        async with db.execute("PRAGMA table_info(invoices)") as cursor:
+            invoice_columns = {row[1] for row in await cursor.fetchall()}
+        if "provider" not in invoice_columns:
+            await db.execute("ALTER TABLE invoices ADD COLUMN provider TEXT NOT NULL DEFAULT 'cryptobot'")
+        if "provider_invoice_id" not in invoice_columns:
+            await db.execute("ALTER TABLE invoices ADD COLUMN provider_invoice_id TEXT")
+
         await db.execute('''
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
@@ -303,10 +311,15 @@ async def remove_favorites_for_product(product_id: int):
         await db.commit()
 
 # Invoices
-async def create_invoice(invoice_id: str, user_id: int, amount: float):
+async def create_invoice(invoice_id: str, user_id: int, amount: float,
+                         provider: str = "cryptobot", provider_invoice_id: str = None):
+    if provider not in ("cryptobot", "xrocket"):
+        raise ValueError("Unsupported payment provider")
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute('INSERT INTO invoices (invoice_id, user_id, amount) VALUES (?, ?, ?)', 
-                         (invoice_id, user_id, amount))
+        await db.execute(
+            "INSERT INTO invoices (invoice_id, user_id, amount, provider, provider_invoice_id) VALUES (?, ?, ?, ?, ?)",
+            (invoice_id, user_id, amount, provider, provider_invoice_id or invoice_id)
+        )
         await db.commit()
 
 async def get_invoice(invoice_id: str) -> Optional[Dict]:
